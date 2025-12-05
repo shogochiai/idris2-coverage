@@ -1,0 +1,9 @@
+=== REQ_COV_TYP_002 Test ===
+Testing: Resolve primitive type state counts
+
+Bool: Just 2
+Nat: Just ≤3
+Unit: Just 1
+[PASS] Primitive state counts resolved
+
+=== Done ===

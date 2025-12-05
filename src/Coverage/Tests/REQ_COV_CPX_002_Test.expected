@@ -1,0 +1,8 @@
+=== REQ_COV_CPX_002 Test ===
+Testing: Determine if function should split
+
+Low complexity (score 10) should split: False
+High complexity (score 75) should split: True
+[PASS] Split decision correct
+
+=== Done ===

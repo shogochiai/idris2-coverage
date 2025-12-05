@@ -1,0 +1,7 @@
+=== REQ_COV_CPX_004 Test ===
+Testing: Produce complexity warnings
+
+Warnings: 3
+[PASS] Complexity warnings produced
+
+=== Done ===

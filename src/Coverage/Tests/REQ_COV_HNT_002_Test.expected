@@ -1,0 +1,8 @@
+=== REQ_COV_HNT_002 Test ===
+Testing: Generate exhaustive path hints
+
+Function: validate
+Exhaustive hints: 3
+[PASS] Exhaustive path hints generated
+
+=== Done ===

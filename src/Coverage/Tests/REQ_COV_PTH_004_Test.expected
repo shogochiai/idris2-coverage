@@ -1,0 +1,9 @@
+=== REQ_COV_PTH_004 Test ===
+Testing: Compute effective test count after pruning
+
+Total branches: 4
+Reachable: 2
+Early exits: 2
+[PASS] Effective test count computed with pruning
+
+=== Done ===

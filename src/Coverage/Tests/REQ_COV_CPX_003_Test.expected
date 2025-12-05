@@ -1,0 +1,8 @@
+=== REQ_COV_CPX_003 Test ===
+Testing: Generate split recommendations
+
+Param count: 6
+Split reasons: 3
+[PASS] Split recommendations generated
+
+=== Done ===

@@ -1,0 +1,7 @@
+=== REQ_COV_SPC_002 Test ===
+Testing: Suggest representative test values
+
+Bool representatives: 2
+[PASS] Representative values suggested
+
+=== Done ===

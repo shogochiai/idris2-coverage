@@ -1,0 +1,8 @@
+=== REQ_COV_LIN_004 Test ===
+Testing: Compute effective state space excluding erased params
+
+Total params: 3
+Runtime params: 2
+[PASS] Erased params excluded from runtime analysis
+
+=== Done ===

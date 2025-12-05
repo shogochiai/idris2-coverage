@@ -1,0 +1,10 @@
+=== REQ_COV_PTH_002 Test ===
+Testing: Analyze Maybe parameter paths
+
+Parameter: config
+Nothing branch pattern: Nothing
+Just branch pattern: Just config
+Can prune Nothing: True
+[PASS] Maybe paths analyzed correctly
+
+=== Done ===

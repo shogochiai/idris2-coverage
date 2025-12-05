@@ -1,0 +1,9 @@
+=== REQ_COV_LIN_002 Test ===
+Testing: Identify erased parameters (Q0)
+
+Q0 isErased: True
+Q1 isErased: False
+QW isErased: False
+[PASS] Erased parameters correctly identified
+
+=== Done ===

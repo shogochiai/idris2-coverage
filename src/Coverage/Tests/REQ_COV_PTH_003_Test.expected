@@ -1,0 +1,10 @@
+=== REQ_COV_PTH_003 Test ===
+Testing: Analyze Either parameter paths
+
+Parameter: result
+Left branch pattern: Left result
+Right branch pattern: Right result
+Can prune Left: True
+[PASS] Either paths analyzed correctly
+
+=== Done ===
