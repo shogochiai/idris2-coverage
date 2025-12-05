@@ -1,7 +1,7 @@
 package idris2-coverage
-version = 0.1.0
+version = 0.3.0
 authors = "lazy-idris team"
-brief = "Code coverage tool for Idris2 using Chez Scheme profiler"
+brief = "Code coverage tool for Idris2 with type-driven state space analysis and test hint generation"
 
 sourcedir = "src"
 main = Main
@@ -15,5 +15,11 @@ modules = Main
         , Coverage.TestRunner
         , Coverage.Aggregator
         , Coverage.Report
+        , Coverage.Linearity
+        , Coverage.TypeAnalyzer
+        , Coverage.StateSpace
+        , Coverage.PathAnalysis
+        , Coverage.Complexity
+        , Coverage.TestHint
 
 executable = idris2-cov

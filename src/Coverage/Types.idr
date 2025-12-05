@@ -4,6 +4,7 @@ module Coverage.Types
 
 import Data.List
 import Data.List1
+import Data.Maybe
 import Data.String
 
 %default total
@@ -163,3 +164,270 @@ belongsToModule : String -> String -> Bool
 belongsToModule schemeFunc idrisModule =
   let modPrefix = idrisToSchemeModule idrisModule
   in isPrefixOf modPrefix schemeFunc
+
+-- =============================================================================
+-- Quantity (Linearity)
+-- =============================================================================
+
+||| Quantity annotation from Idris2's QTT (Quantitative Type Theory)
+public export
+data Quantity : Type where
+  Q0 : Quantity    -- Erased: compile-time only, no runtime representation
+  Q1 : Quantity    -- Linear: must be used exactly once
+  QW : Quantity    -- Unrestricted (ω): can be used any number of times
+
+public export
+Show Quantity where
+  show Q0 = "0"
+  show Q1 = "1"
+  show QW = "ω"
+
+public export
+Eq Quantity where
+  Q0 == Q0 = True
+  Q1 == Q1 = True
+  QW == QW = True
+  _  == _  = False
+
+-- =============================================================================
+-- State Count (State Space Analysis)
+-- =============================================================================
+
+||| State count: finite, bounded, or unbounded
+public export
+data StateCount : Type where
+  Finite    : Nat -> StateCount    -- Exact state count (e.g., Bool = 2)
+  Bounded   : Nat -> StateCount    -- Upper bound after equivalence classes
+  Unbounded : StateCount           -- Infinite (String, List without bounds)
+
+public export
+Show StateCount where
+  show (Finite n)  = show n
+  show (Bounded n) = "≤" ++ show n
+  show Unbounded   = "∞"
+
+public export
+Eq StateCount where
+  Finite n  == Finite m  = n == m
+  Bounded n == Bounded m = n == m
+  Unbounded == Unbounded = True
+  _         == _         = False
+
+||| Multiply state counts (for product types / multiple params)
+public export
+multStateCount : StateCount -> StateCount -> StateCount
+multStateCount (Finite 0)  _            = Finite 0
+multStateCount _           (Finite 0)   = Finite 0
+multStateCount (Finite n)  (Finite m)   = Finite (n * m)
+multStateCount (Finite n)  (Bounded m)  = Bounded (n * m)
+multStateCount (Bounded n) (Finite m)   = Bounded (n * m)
+multStateCount (Bounded n) (Bounded m)  = Bounded (n * m)
+multStateCount _           _            = Unbounded
+
+||| Add state counts (for sum types)
+public export
+addStateCount : StateCount -> StateCount -> StateCount
+addStateCount (Finite n)  (Finite m)  = Finite (n + m)
+addStateCount (Finite n)  (Bounded m) = Bounded (n + m)
+addStateCount (Bounded n) (Finite m)  = Bounded (n + m)
+addStateCount (Bounded n) (Bounded m) = Bounded (n + m)
+addStateCount _           _           = Unbounded
+
+||| Apply equivalence class limit
+public export
+boundStateCount : Nat -> StateCount -> StateCount
+boundStateCount limit (Finite n)  = if n > limit then Bounded limit else Finite n
+boundStateCount limit (Bounded n) = Bounded (min limit n)
+boundStateCount limit Unbounded   = Bounded limit
+
+-- =============================================================================
+-- Type Complexity
+-- =============================================================================
+
+||| Type complexity classification
+public export
+data TypeComplexity : Type where
+  TCFinite    : Nat -> TypeComplexity    -- Bool, small enums
+  TCBounded   : Nat -> TypeComplexity    -- After equivalence class partitioning
+  TCRecursive : Nat -> TypeComplexity    -- Recursive types (depth-bounded)
+  TCUnbounded : TypeComplexity           -- Cannot analyze
+
+public export
+Show TypeComplexity where
+  show (TCFinite n)    = "Finite(" ++ show n ++ ")"
+  show (TCBounded n)   = "Bounded(" ++ show n ++ ")"
+  show (TCRecursive n) = "Recursive(depth=" ++ show n ++ ")"
+  show TCUnbounded     = "Unbounded"
+
+-- =============================================================================
+-- Type Information
+-- =============================================================================
+
+||| Constructor info: name and argument types
+public export
+record ConstructorInfo where
+  constructor MkConstructorInfo
+  ctorName : String
+  ctorArgs : List (String, Quantity)   -- (typeName, linearity)
+
+public export
+Show ConstructorInfo where
+  show c = c.ctorName ++ "(" ++ show (length c.ctorArgs) ++ " args)"
+
+public export
+Eq ConstructorInfo where
+  c1 == c2 = c1.ctorName == c2.ctorName
+
+||| Extracted type information
+public export
+record TypeInfo where
+  constructor MkTypeInfo
+  typeName     : String
+  constructors : List ConstructorInfo
+  isRecursive  : Bool
+  complexity   : TypeComplexity
+  stateCount   : StateCount
+
+public export
+Show TypeInfo where
+  show t = t.typeName ++ " [" ++ show t.stateCount ++ "]"
+
+public export
+Eq TypeInfo where
+  t1 == t2 = t1.typeName == t2.typeName
+
+-- =============================================================================
+-- Linear Parameter
+-- =============================================================================
+
+||| Function parameter with linearity annotation
+public export
+record LinearParam where
+  constructor MkLinearParam
+  paramName : Maybe String
+  paramType : String
+  quantity  : Quantity
+  typeInfo  : Maybe TypeInfo
+
+public export
+Show LinearParam where
+  show p = "(" ++ show p.quantity ++ " " ++ fromMaybe "_" p.paramName ++ " : " ++ p.paramType ++ ")"
+
+public export
+Eq LinearParam where
+  p1 == p2 = p1.paramName == p2.paramName
+          && p1.paramType == p2.paramType
+          && p1.quantity == p2.quantity
+
+-- =============================================================================
+-- Reachability (Path Analysis)
+-- =============================================================================
+
+||| Branch reachability classification
+public export
+data Reachability : Type where
+  Always      : Reachability    -- Always reachable
+  Conditional : Reachability    -- Reachable under conditions
+  EarlyExit   : Reachability    -- Early return (Nothing, Left, etc.)
+  Unreachable : Reachability    -- Unreachable (eliminated by types)
+
+public export
+Show Reachability where
+  show Always      = "Always"
+  show Conditional = "Conditional"
+  show EarlyExit   = "EarlyExit"
+  show Unreachable = "Unreachable"
+
+public export
+Eq Reachability where
+  Always      == Always      = True
+  Conditional == Conditional = True
+  EarlyExit   == EarlyExit   = True
+  Unreachable == Unreachable = True
+  _           == _           = False
+
+||| Pattern match branch with reachability info
+public export
+record PatternBranch where
+  constructor MkPatternBranch
+  pattern      : String          -- "Just x", "Nothing", etc.
+  reachability : Reachability
+  prunable     : Bool            -- Can be represented by other cases
+  stateCount   : StateCount      -- States this branch covers
+
+public export
+Show PatternBranch where
+  show b = b.pattern ++ " [" ++ show b.reachability ++ "]"
+
+-- =============================================================================
+-- Linear Resource Tracking
+-- =============================================================================
+
+||| A resource that must be consumed (for linear types)
+public export
+record LinearResource where
+  constructor MkLinearResource
+  resourceType : String          -- "FileHandle", "Connection"
+  acquiredBy   : List String     -- Functions that create this resource
+  consumedBy   : List String     -- Functions that consume this resource
+
+public export
+Show LinearResource where
+  show r = r.resourceType ++ " (acquire: " ++ show r.acquiredBy ++ ", consume: " ++ show r.consumedBy ++ ")"
+
+-- =============================================================================
+-- Function State Space
+-- =============================================================================
+
+||| Extended function coverage with state space analysis
+public export
+record FunctionStateSpace where
+  constructor MkFunctionStateSpace
+  funcCoverage       : FunctionCoverage
+  params             : List LinearParam
+  estimatedCases     : StateCount
+  actualCases        : Nat
+  stateSpaceCoverage : Double
+  prunedPaths        : List PatternBranch
+  linearResources    : List LinearResource
+
+public export
+Show FunctionStateSpace where
+  show f = show f.funcCoverage ++ " [state space: " ++ show f.stateSpaceCoverage ++ "%]"
+
+-- =============================================================================
+-- Complexity Metrics
+-- =============================================================================
+
+||| Function complexity metrics for split recommendations
+public export
+record ComplexityMetrics where
+  constructor MkComplexityMetrics
+  paramCount      : Nat
+  stateSpaceSize  : StateCount
+  patternDepth    : Nat           -- Max nesting depth of pattern matches
+  branchCount     : Nat           -- Number of case/if branches
+  linearParams    : Nat           -- Count of linear parameters
+  shouldSplit     : Bool
+  splitReason     : Maybe String
+
+public export
+Show ComplexityMetrics where
+  show c = "Complexity(params=" ++ show c.paramCount
+        ++ ", branches=" ++ show c.branchCount
+        ++ ", split=" ++ show c.shouldSplit ++ ")"
+
+-- =============================================================================
+-- Extended Coverage Report
+-- =============================================================================
+
+||| Coverage report with state space analysis
+public export
+record StateSpaceReport where
+  constructor MkStateSpaceReport
+  runtimeCoverage    : CoverageReport
+  functionStateSpace : List FunctionStateSpace
+  totalEstimated     : StateCount
+  totalActual        : Nat
+  stateSpaceCoverage : Double
+  complexityWarnings : List (String, ComplexityMetrics)   -- Functions that should be split
