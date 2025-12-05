@@ -1,0 +1,5 @@
+=== REQ_COV_COL_003 Test ===
+Testing: Parse .ss file for define patterns
+Definitions parsed: 3
+[PASS] Parsed all define patterns
+=== Done ===

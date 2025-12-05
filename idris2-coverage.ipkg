@@ -1,0 +1,19 @@
+package idris2-coverage
+version = 0.1.0
+authors = "lazy-idris team"
+brief = "Code coverage tool for Idris2 using Chez Scheme profiler"
+
+sourcedir = "src"
+main = Main
+
+depends = base, contrib
+
+modules = Main
+        , Coverage.Types
+        , Coverage.Collector
+        , Coverage.SourceAnalyzer
+        , Coverage.TestRunner
+        , Coverage.Aggregator
+        , Coverage.Report
+
+executable = idris2-cov

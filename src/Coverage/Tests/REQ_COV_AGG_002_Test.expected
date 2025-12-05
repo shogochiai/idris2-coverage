@@ -1,0 +1,5 @@
+=== REQ_COV_AGG_002 Test ===
+Testing: Coverage percent computation
+Coverage percent: 100.0
+[PASS] Computed 100% coverage
+=== Done ===

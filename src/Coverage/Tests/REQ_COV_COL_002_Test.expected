@@ -1,0 +1,5 @@
+=== REQ_COV_COL_002 Test ===
+Testing: Extract function name and hit count
+Definitions found: 2
+[PASS] Extracted 2 function definitions
+=== Done ===

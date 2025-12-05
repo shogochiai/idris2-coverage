@@ -1,0 +1,80 @@
+Audit target: .
+Timestamp: 1764904103
+Status: ok
+===============================================
+REQUIREMENT SUMMARY (ST Parity):
+  Total requirements: 0
+  Covered: 0
+  Missing: 0
+  Coverage: 100%
+===============================================
+TYPE PARITY (SI Parity):
+  Total type specs: 0
+  Matched: 0
+  Missing: 0
+  SI Parity: N/A
+===============================================
+T-I PARITY (Golden Tests):
+  Total tests: 0
+  Passed: 0
+  Test pass rate: 0.0%
+  Total functions: 117
+  Coverage rate: 0.0%
+  T-I Score: 0.0%
+===============================================
+ORPHAN TESTS (Tests without SPEC):
+  Total test files: 0
+  Matched to specs: 0
+  Orphans: 0 (0%)
+===============================================
+TYPE ORPHANS (Impls without [[type]] specs):
+  Total symbols: 127
+  Specified: 113
+  Orphans: 14 (11%)
+===============================================
+Semantic: ok (STPM ready (score=80%, medium))
+Tests: ok (tests passed)
+
+TYPE ORPHAN FINDINGS:
+  [function] coveredFunction
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `coveredFunction`
+  [function] uncoveredFunction
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `uncoveredFunction`
+  [function] parseSchemeFunc
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `parseSchemeFunc`
+  [function] idrisToSchemeModule
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `idrisToSchemeModule`
+  [function] belongsToModule
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `belongsToModule`
+  [data] OutputFormat
+    Path: src/Coverage/Report.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `OutputFormat`
+  [record] ProfileHit
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `ProfileHit`
+  [record] FunctionCoverage
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `FunctionCoverage`
+  [record] ModuleCoverage
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `ModuleCoverage`
+  [record] ProjectCoverage
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `ProjectCoverage`
+  [record] CoverageReport
+    Path: src/Coverage/Types.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `CoverageReport`
+  [record] FunctionDef
+    Path: src/Coverage/SourceAnalyzer.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `FunctionDef`
+  [record] FunctionHitAggregate
+    Path: src/Coverage/Aggregator.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `FunctionHitAggregate`
+  [record] TestProfileResult
+    Path: src/Coverage/TestRunner.idr
+    Add [[type]] to src/Coverage/SPEC.toml with text mentioning `TestProfileResult`

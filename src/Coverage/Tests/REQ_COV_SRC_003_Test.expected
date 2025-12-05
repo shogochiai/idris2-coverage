@@ -1,0 +1,6 @@
+=== REQ_COV_SRC_003 Test ===
+Testing: Extract function signatures
+Function: calculate
+Signature: Int -> Int -> Int
+[PASS] Extracted signature
+=== Done ===

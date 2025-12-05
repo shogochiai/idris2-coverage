@@ -1,0 +1,232 @@
+# Coverage SPEC.toml - Code Coverage Module for Idris2
+
+[definitions]
+module_self = "src/Coverage"
+fn_collectProfile = "collectProfile"
+fn_analyzeSource = "analyzeSource"
+fn_runTests = "runTests"
+fn_aggregate = "aggregate"
+fn_generateReport = "generateReport"
+type_FunctionCoverage = "FunctionCoverage"
+type_ModuleCoverage = "ModuleCoverage"
+type_ProjectCoverage = "ProjectCoverage"
+type_CoverageReport = "CoverageReport"
+type_ProfileHit = "ProfileHit"
+type_FunctionDef = "FunctionDef"
+type_FunctionHitAggregate = "FunctionHitAggregate"
+type_TestProfileResult = "TestProfileResult"
+type_OutputFormat = "OutputFormat"
+type_ExprCoverage = "ExprCoverage"
+
+# =============================================================================
+# Type Specifications
+# =============================================================================
+
+[[type]]
+id = "REQ_TYPE_COV_001"
+text = "There exists a record `${type_FunctionCoverage}` containing moduleName, name, signature, lineStart, lineEnd, coveredLines, totalLines, coveragePercent, and calledByTests fields"
+
+[[type]]
+id = "REQ_TYPE_COV_002"
+text = "There exists a record `${type_ModuleCoverage}` containing path, functionsTotal, functionsCovered, and lineCoveragePercent fields"
+
+[[type]]
+id = "REQ_TYPE_COV_003"
+text = "There exists a record `${type_ProjectCoverage}` containing totalFunctions, coveredFunctions, lineCoveragePercent, and branchCoveragePercent fields"
+
+[[type]]
+id = "REQ_TYPE_COV_004"
+text = "There exists a record `${type_CoverageReport}` containing functions, modules, and project fields"
+
+[[type]]
+id = "REQ_TYPE_COV_005"
+text = "There exists a record `${type_ProfileHit}` containing schemeFunc, hitCount, filePath, and line fields"
+
+[[type]]
+id = "REQ_TYPE_COV_006"
+text = "There exists a record `${type_FunctionDef}` containing name, signature, lineStart, lineEnd, and exported fields for parsed Idris function definitions"
+
+[[type]]
+id = "REQ_TYPE_COV_007"
+text = "There exists a record `${type_FunctionHitAggregate}` containing schemeFunc, totalHits, and calledByTests for aggregated profile data"
+
+[[type]]
+id = "REQ_TYPE_COV_008"
+text = "There exists a record `${type_TestProfileResult}` containing testId, testPassed, and profileHits for test execution results"
+
+[[type]]
+id = "REQ_TYPE_COV_009"
+text = "There exists a data type `${type_OutputFormat}` with constructors JSON and Text for report format selection"
+
+[[type]]
+id = "REQ_TYPE_UTIL_001"
+text = "There exists a function `parseSchemeFunc` that parses Scheme function names like 'Module-func' into (module, funcName) pairs"
+
+[[type]]
+id = "REQ_TYPE_UTIL_002"
+text = "There exists a function `idrisToSchemeModule` that converts Idris module names to Scheme format (e.g., 'A.B' -> 'AC-45B')"
+
+[[type]]
+id = "REQ_TYPE_UTIL_003"
+text = "There exists a function `belongsToModule` that checks if a Scheme function name belongs to a given Idris module"
+
+[[type]]
+id = "REQ_TYPE_UTIL_004"
+text = "There exists a function `coveredFunction` that creates a FunctionCoverage with 100% coverage for testing"
+
+[[type]]
+id = "REQ_TYPE_UTIL_005"
+text = "There exists a function `uncoveredFunction` that creates a FunctionCoverage with 0% coverage for testing"
+
+[[type]]
+id = "REQ_TYPE_COV_010"
+text = "There exists a record `${type_ExprCoverage}` containing line, char, and count fields for expression-level coverage data from annotated .ss.html"
+
+# =============================================================================
+# Collector Specifications
+# =============================================================================
+
+[[spec_area]]
+name = "Profile Collection"
+description = "Parse Chez Scheme profile HTML output"
+
+[[spec_area.sub_feature]]
+name = "HTML Parsing"
+specs = [
+  "- [REQ_COV_COL_001] ${module_self}/Collector SHALL parse profile.html Hot Spots table",
+  "- [REQ_COV_COL_002] ${module_self}/Collector SHALL extract function name and hit count from each row",
+  "- [REQ_COV_COL_003] ${module_self}/Collector SHALL parse .ss file for (define Module-func ...) patterns",
+  "- [REQ_COV_COL_004] ${module_self}/Collector SHALL return List ProfileHit"
+]
+
+# =============================================================================
+# Source Analyzer Specifications
+# =============================================================================
+
+[[spec_area]]
+name = "Source Analysis"
+description = "Parse Idris2 source files for function metadata"
+
+[[spec_area.sub_feature]]
+name = "Function Discovery"
+specs = [
+  "- [REQ_COV_SRC_001] ${module_self}/SourceAnalyzer SHALL extract export declarations from .idr files",
+  "- [REQ_COV_SRC_002] ${module_self}/SourceAnalyzer SHALL determine line_start and line_end for each function",
+  "- [REQ_COV_SRC_003] ${module_self}/SourceAnalyzer SHALL extract function signatures",
+  "- [REQ_COV_SRC_004] ${module_self}/SourceAnalyzer SHALL handle multi-line function definitions"
+]
+
+# =============================================================================
+# Test Runner Specifications
+# =============================================================================
+
+[[spec_area]]
+name = "Test Execution"
+description = "Run tests with profiling enabled"
+
+[[spec_area.sub_feature]]
+name = "Profile Execution"
+specs = [
+  "- [REQ_COV_RUN_001] ${module_self}/TestRunner SHALL discover test files matching glob pattern",
+  "- [REQ_COV_RUN_002] ${module_self}/TestRunner SHALL compile each test with idris2 --profile",
+  "- [REQ_COV_RUN_003] ${module_self}/TestRunner SHALL execute compiled test and capture profile.html",
+  "- [REQ_COV_RUN_004] ${module_self}/TestRunner SHALL associate profile results with test ID"
+]
+
+# =============================================================================
+# Aggregator Specifications
+# =============================================================================
+
+[[spec_area]]
+name = "Coverage Aggregation"
+description = "Aggregate coverage data and compute called_by_tests"
+
+[[spec_area.sub_feature]]
+name = "Test Mapping"
+specs = [
+  "- [REQ_COV_AGG_001] ${module_self}/Aggregator SHALL map each function to list of tests that called it",
+  "- [REQ_COV_AGG_002] ${module_self}/Aggregator SHALL compute coverage_percent per function",
+  "- [REQ_COV_AGG_003] ${module_self}/Aggregator SHALL detect dead code (exported but not in .ss)",
+  "- [REQ_COV_AGG_004] ${module_self}/Aggregator SHALL aggregate to module and project level"
+]
+
+# =============================================================================
+# Report Specifications
+# =============================================================================
+
+[[spec_area]]
+name = "Report Generation"
+description = "Generate coverage reports in JSON/Text format"
+
+[[spec_area.sub_feature]]
+name = "Output Formats"
+specs = [
+  "- [REQ_COV_REP_001] ${module_self}/Report SHALL generate JSON output matching lazy-idris schema",
+  "- [REQ_COV_REP_002] ${module_self}/Report SHALL generate human-readable text output",
+  "- [REQ_COV_REP_003] ${module_self}/Report SHALL include all required fields per lazy-idris spec",
+  "- [REQ_COV_REP_004] ${module_self}/Report SHALL write output to specified file path"
+]
+
+# =============================================================================
+# Specs (normalized)
+# =============================================================================
+
+[[spec]]
+id = "REQ_COV_COL_001"
+description = "${module_self}/Collector SHALL parse profile.html Hot Spots table"
+
+[[spec]]
+id = "REQ_COV_COL_002"
+description = "${module_self}/Collector SHALL extract function name and hit count from each row"
+
+[[spec]]
+id = "REQ_COV_COL_003"
+description = "${module_self}/Collector SHALL parse .ss file for (define Module-func ...) patterns"
+
+[[spec]]
+id = "REQ_COV_COL_004"
+description = "${module_self}/Collector SHALL return List ProfileHit"
+
+[[spec]]
+id = "REQ_COV_SRC_001"
+description = "${module_self}/SourceAnalyzer SHALL extract export declarations from .idr files"
+
+[[spec]]
+id = "REQ_COV_SRC_002"
+description = "${module_self}/SourceAnalyzer SHALL determine line_start and line_end for each function"
+
+[[spec]]
+id = "REQ_COV_SRC_003"
+description = "${module_self}/SourceAnalyzer SHALL extract function signatures"
+
+[[spec]]
+id = "REQ_COV_RUN_001"
+description = "${module_self}/TestRunner SHALL discover test files matching glob pattern"
+
+[[spec]]
+id = "REQ_COV_RUN_002"
+description = "${module_self}/TestRunner SHALL compile each test with idris2 --profile"
+
+[[spec]]
+id = "REQ_COV_RUN_003"
+description = "${module_self}/TestRunner SHALL execute compiled test and capture profile.html"
+
+[[spec]]
+id = "REQ_COV_AGG_001"
+description = "${module_self}/Aggregator SHALL map each function to list of tests that called it"
+
+[[spec]]
+id = "REQ_COV_AGG_002"
+description = "${module_self}/Aggregator SHALL compute coverage_percent per function"
+
+[[spec]]
+id = "REQ_COV_AGG_003"
+description = "${module_self}/Aggregator SHALL detect dead code (exported but not in .ss)"
+
+[[spec]]
+id = "REQ_COV_REP_001"
+description = "${module_self}/Report SHALL generate JSON output matching lazy-idris schema"
+
+[[spec]]
+id = "REQ_COV_REP_002"
+description = "${module_self}/Report SHALL generate human-readable text output"
