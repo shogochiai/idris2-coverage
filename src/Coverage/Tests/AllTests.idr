@@ -2,7 +2,6 @@
 ||| Consolidates all 44 Golden Tests into a single test runner
 module Coverage.Tests.AllTests
 
-import Test.PerModule
 import Coverage.Types
 import Coverage.Linearity
 import Coverage.TypeAnalyzer
@@ -18,6 +17,7 @@ import Coverage.TestRunner
 import Data.List
 import Data.String
 import Data.Maybe
+import System
 
 %default total
 
@@ -395,85 +395,78 @@ test_HNT_004 = do
   pure $ hintReport.totalHints >= 0
 
 -- =============================================================================
--- All Tests List
+-- All Tests
 -- =============================================================================
 
 export
 covering
-allTests : List TestDef
+allTests : List (String, IO Bool)
 allTests =
-  -- Linearity (LIN)
-  [ test "REQ_COV_LIN_001" "Parse quantity annotations (0/1/ω)" test_LIN_001
-  , test "REQ_COV_LIN_002" "Identify erased parameters (Q0)" test_LIN_002
-  , test "REQ_COV_LIN_003" "Identify linear parameters (Q1)" test_LIN_003
-  , test "REQ_COV_LIN_004" "Identify unrestricted parameters (QW)" test_LIN_004
-
-  -- Type Analyzer (TYP)
-  , test "REQ_COV_TYP_001" "Parse function signatures with linearity" test_TYP_001
-  , test "REQ_COV_TYP_002" "Extract return type information" test_TYP_002
-  , test "REQ_COV_TYP_003" "Detect linear parameters in signatures" test_TYP_003
-  , test "REQ_COV_TYP_004" "Calculate function arity" test_TYP_004
-
-  -- State Space (SPC)
-  , test "REQ_COV_SPC_001" "Calculate parameter state space" test_SPC_001
-  , test "REQ_COV_SPC_002" "Handle Maybe type state space" test_SPC_002
-  , test "REQ_COV_SPC_003" "Handle List type (bounded state)" test_SPC_003
-  , test "REQ_COV_SPC_004" "Handle Either type state space" test_SPC_004
-
-  -- Path Analysis (PTH)
-  , test "REQ_COV_PTH_001" "Detect Nothing/Left/Nil early exits" test_PTH_001
-  , test "REQ_COV_PTH_002" "Count branch paths" test_PTH_002
-  , test "REQ_COV_PTH_003" "Detect conditional patterns" test_PTH_003
-  , test "REQ_COV_PTH_004" "Detect catch-all patterns" test_PTH_004
-
-  -- Complexity (CPX)
-  , test "REQ_COV_CPX_001" "Calculate complexity factors" test_CPX_001
-  , test "REQ_COV_CPX_002" "Calculate parameter factor" test_CPX_002
-  , test "REQ_COV_CPX_003" "Calculate state factor" test_CPX_003
-  , test "REQ_COV_CPX_004" "Calculate branch factor" test_CPX_004
-
-  -- Source Analyzer (SRC)
-  , test "REQ_COV_SRC_001" "Extract export declarations" test_SRC_001
-  , test "REQ_COV_SRC_002" "Detect public exports" test_SRC_002
-  , test "REQ_COV_SRC_003" "Parse import declarations" test_SRC_003
-  , test "REQ_COV_SRC_004" "Distinguish private functions" test_SRC_004
-
-  -- Collector (COL)
-  , test "REQ_COV_COL_001" "Parse profile.html Hot Spots" test_COL_001
-  , test "REQ_COV_COL_002" "Parse Scheme function definitions" test_COL_002
-  , test "REQ_COV_COL_003" "Handle encoded module names" test_COL_003
-  , test "REQ_COV_COL_004" "Handle zero coverage entries" test_COL_004
-
-  -- Report (REP)
-  , test "REQ_COV_REP_001" "Generate JSON output" test_REP_001
-  , test "REQ_COV_REP_002" "Include coverage percent in output" test_REP_002
-  , test "REQ_COV_REP_003" "Handle covered lines field" test_REP_003
-  , test "REQ_COV_REP_004" "Aggregate module coverage" test_REP_004
-
-  -- Aggregator (AGG)
-  , test "REQ_COV_AGG_001" "Map function to test list" test_AGG_001
-  , test "REQ_COV_AGG_002" "Aggregate functions per module" test_AGG_002
-  , test "REQ_COV_AGG_003" "Calculate covered count" test_AGG_003
-  , test "REQ_COV_AGG_004" "Track uncovered functions" test_AGG_004
-
-  -- Test Runner (RUN)
-  , test "REQ_COV_RUN_001" "Test file discovery" test_RUN_001
-  , test "REQ_COV_RUN_002" "Glob pattern matching" test_RUN_002
-  , test "REQ_COV_RUN_003" "Test result structure" test_RUN_003
-  , test "REQ_COV_RUN_004" "Calculate pass rate" test_RUN_004
-
-  -- Test Hint (HNT)
-  , test "REQ_COV_HNT_001" "Generate happy path hints" test_HNT_001
-  , test "REQ_COV_HNT_002" "Generate error path hints" test_HNT_002
-  , test "REQ_COV_HNT_003" "Generate edge case hints" test_HNT_003
-  , test "REQ_COV_HNT_004" "Combine all hints" test_HNT_004
+  [ ("REQ_COV_LIN_001", test_LIN_001)
+  , ("REQ_COV_LIN_002", test_LIN_002)
+  , ("REQ_COV_LIN_003", test_LIN_003)
+  , ("REQ_COV_LIN_004", test_LIN_004)
+  , ("REQ_COV_TYP_001", test_TYP_001)
+  , ("REQ_COV_TYP_002", test_TYP_002)
+  , ("REQ_COV_TYP_003", test_TYP_003)
+  , ("REQ_COV_TYP_004", test_TYP_004)
+  , ("REQ_COV_SPC_001", test_SPC_001)
+  , ("REQ_COV_SPC_002", test_SPC_002)
+  , ("REQ_COV_SPC_003", test_SPC_003)
+  , ("REQ_COV_SPC_004", test_SPC_004)
+  , ("REQ_COV_PTH_001", test_PTH_001)
+  , ("REQ_COV_PTH_002", test_PTH_002)
+  , ("REQ_COV_PTH_003", test_PTH_003)
+  , ("REQ_COV_PTH_004", test_PTH_004)
+  , ("REQ_COV_CPX_001", test_CPX_001)
+  , ("REQ_COV_CPX_002", test_CPX_002)
+  , ("REQ_COV_CPX_003", test_CPX_003)
+  , ("REQ_COV_CPX_004", test_CPX_004)
+  , ("REQ_COV_SRC_001", test_SRC_001)
+  , ("REQ_COV_SRC_002", test_SRC_002)
+  , ("REQ_COV_SRC_003", test_SRC_003)
+  , ("REQ_COV_SRC_004", test_SRC_004)
+  , ("REQ_COV_COL_001", test_COL_001)
+  , ("REQ_COV_COL_002", test_COL_002)
+  , ("REQ_COV_COL_003", test_COL_003)
+  , ("REQ_COV_COL_004", test_COL_004)
+  , ("REQ_COV_REP_001", test_REP_001)
+  , ("REQ_COV_REP_002", test_REP_002)
+  , ("REQ_COV_REP_003", test_REP_003)
+  , ("REQ_COV_REP_004", test_REP_004)
+  , ("REQ_COV_AGG_001", test_AGG_001)
+  , ("REQ_COV_AGG_002", test_AGG_002)
+  , ("REQ_COV_AGG_003", test_AGG_003)
+  , ("REQ_COV_AGG_004", test_AGG_004)
+  , ("REQ_COV_RUN_001", test_RUN_001)
+  , ("REQ_COV_RUN_002", test_RUN_002)
+  , ("REQ_COV_RUN_003", test_RUN_003)
+  , ("REQ_COV_RUN_004", test_RUN_004)
+  , ("REQ_COV_HNT_001", test_HNT_001)
+  , ("REQ_COV_HNT_002", test_HNT_002)
+  , ("REQ_COV_HNT_003", test_HNT_003)
+  , ("REQ_COV_HNT_004", test_HNT_004)
   ]
 
 -- =============================================================================
 -- Main Entry Point
 -- =============================================================================
 
+covering
+runTest : (String, IO Bool) -> IO Bool
+runTest (name, test) = do
+  result <- test
+  putStrLn $ "[" ++ (if result then "PASS" else "FAIL") ++ "] " ++ name
+  pure result
+
 export
 covering
 main : IO ()
-main = runTestSuite "idris2-coverage Per-Module Tests" allTests
+main = do
+  putStrLn $ "Running " ++ show (length allTests) ++ " tests..."
+  results <- traverse runTest allTests
+  let passed = length (filter id results)
+  putStrLn $ "Passed: " ++ show passed ++ "/" ++ show (length allTests)
+  if passed == length allTests
+     then putStrLn "All tests passed!"
+     else exitFailure
