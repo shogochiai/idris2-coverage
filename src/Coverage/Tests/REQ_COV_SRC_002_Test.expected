@@ -1,6 +1,0 @@
-=== REQ_COV_SRC_002 Test ===
-Testing: line_start and line_end extraction
-Function: myFunc
-Line start: 4
-[PASS] Extracted line information
-=== Done ===

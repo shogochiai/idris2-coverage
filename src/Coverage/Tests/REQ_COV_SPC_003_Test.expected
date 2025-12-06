@@ -1,8 +1,0 @@
-=== REQ_COV_SPC_003 Test ===
-Testing: Identify coverage gaps
-
-Existing tests: 2
-Coverage gaps found: 2
-[PASS] Coverage gaps identified
-
-=== Done ===

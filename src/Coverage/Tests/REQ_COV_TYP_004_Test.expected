@@ -1,9 +1,0 @@
-=== REQ_COV_TYP_004 Test ===
-Testing: Produce AnalyzedFunction records
-
-Function name: testFunc
-Param count: 2
-State space: ≤6
-[PASS] AnalyzedFunction record produced
-
-=== Done ===

@@ -1,6 +1,0 @@
-=== REQ_COV_SRC_004 Test ===
-Testing: Multi-line function definitions
-Function: complexFunc
-Line range: 4-4
-[PASS] Handled multi-line definition
-=== Done ===

@@ -1,8 +1,0 @@
-=== REQ_COV_TYP_003 Test ===
-Testing: Analyze Maybe/Either/List/Pair types
-
-Maybe Int: ≤4
-List Bool: ≤3
-[PASS] Compound types analyzed correctly
-
-=== Done ===

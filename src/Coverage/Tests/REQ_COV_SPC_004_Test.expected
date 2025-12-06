@@ -1,8 +1,0 @@
-=== REQ_COV_SPC_004 Test ===
-Testing: Apply configurable state limits
-
-Original: ≤500
-Limited: ≤3
-[PASS] State limits applied correctly
-
-=== Done ===

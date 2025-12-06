@@ -1,8 +1,0 @@
-=== REQ_COV_TYP_001 Test ===
-Testing: Parse function signatures with linearity
-
-Signature: (1 h : Handle) -> String -> IO ()
-Params extracted: 2
-[PASS] Linearity annotation parsed
-
-=== Done ===

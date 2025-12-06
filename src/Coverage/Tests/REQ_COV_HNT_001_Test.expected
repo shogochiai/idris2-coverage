@@ -1,8 +1,0 @@
-=== REQ_COV_HNT_001 Test ===
-Testing: Generate happy path hints
-
-Function: process
-Happy path hints: 1
-[PASS] Happy path hints generated
-
-=== Done ===

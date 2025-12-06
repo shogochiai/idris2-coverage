@@ -1,7 +1,0 @@
-=== REQ_COV_COL_001 Test ===
-Testing: Parse profile.html Hot Spots table
-
-Hot spots found: 2
-[PASS] Parsed hot spot entries
-
-=== Done ===

@@ -1,9 +1,0 @@
-=== REQ_COV_LIN_003 Test ===
-Testing: Identify linear parameters (Q1)
-
-Q0 isLinear: False
-Q1 isLinear: True
-QW isLinear: False
-[PASS] Linear parameters correctly identified
-
-=== Done ===

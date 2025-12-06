@@ -1,7 +1,0 @@
-=== REQ_COV_SPC_001 Test ===
-Testing: Calculate parameter state space
-
-Bool param: ≤10
-[PASS] Parameter state space calculated
-
-=== Done ===

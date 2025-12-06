@@ -1,9 +1,0 @@
-=== REQ_COV_LIN_001 Test ===
-Testing: Parse quantity annotations (0/1/ω)
-
-Parse '0': 0
-Parse '1': 1
-Parse 'ω': ω
-[PASS] All quantity annotations parsed correctly
-
-=== Done ===

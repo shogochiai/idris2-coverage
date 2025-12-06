@@ -1,8 +1,0 @@
-=== REQ_COV_HNT_004 Test ===
-Testing: Output hints as JSON
-
-Function: process
-JSON length: 2794
-[PASS] Hints output as JSON
-
-=== Done ===
