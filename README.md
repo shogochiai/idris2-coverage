@@ -7,6 +7,7 @@ Combines runtime profiling (via Chez Scheme) with static type analysis to provid
 ## Features
 
 - **Runtime Coverage**: Traditional line/function coverage via Chez Scheme profiler
+- **Branch Coverage**: Analyzes if/case/cond branches to identify untested code paths
 - **State Space Analysis**: Estimates required test cases from type signatures
 - **Linearity Support**: Handles Idris2's QTT (Quantitative Type Theory) annotations
 - **Path Pruning**: Automatically detects and prunes early-exit paths (Nothing, Left, etc.)
@@ -99,7 +100,70 @@ process (Just x) (Just y) = compute x y     -- Happy path
 Without pruning: 2 × 2 = 4 test cases
 With pruning: 2 test cases (1 early exit + 1 happy path)
 
-### 5. Test Hint Generation
+### 5. Branch Coverage
+
+Analyzes Scheme-level branch constructs (`if`, `case`, `cond`) to identify untested code paths.
+
+```
+Expression Coverage: 73.7% (13296/18034 expressions)
+Branch Coverage:     33.6% (150/446 branches)
+```
+
+Branch coverage is complementary to expression coverage - it specifically tracks whether all paths through conditional logic were exercised.
+
+#### Branch Types
+
+| Type | Branches | Coverage Requirement |
+|------|----------|---------------------|
+| `if` | 2 (then/else) | Both branches must be taken |
+| `case` | N patterns | Each pattern must be matched |
+| `cond` | N conditions | Each condition must be satisfied |
+
+#### Branch Coverage JSON
+
+```json
+{
+  "total_branch_points": 217,
+  "total_branches": 446,
+  "covered_branches": 150,
+  "branch_percent": 33.63
+}
+```
+
+#### Branch-Specific Test Hints
+
+For uncovered branches, actionable hints are generated:
+
+```json
+{
+  "function": "PreludeC-45Types-u--foldr_Foldable_List",
+  "line": 732,
+  "branch_type": "if",
+  "uncovered_path": "else-branch not taken",
+  "suggested_input": "Provide input where condition is FALSE",
+  "priority": "IMPORTANT",
+  "rationale": "The false-case of this if expression was never executed"
+}
+```
+
+#### Human-Readable Hint Output
+
+```
+=== Branch Coverage Improvement Hints ===
+
+Uncovered branches: 56
+
+--- IMPORTANT (should fix) ---
+  * blodwen-lazy (line 43)
+    Problem: else-branch not taken
+    Solution: Provide input where condition is FALSE
+
+  * PreludeC-45Types-u--foldr_Foldable_List (line 732)
+    Problem: else-branch not taken
+    Solution: Provide input where condition is FALSE
+```
+
+### 6. Test Hint Generation
 
 For functions without tests, idris2-coverage generates actionable hints:
 
@@ -315,13 +379,94 @@ idris2 -o test-runner -p idris2-coverage src/Coverage/Tests.idr
 
 ## Integration with lazy-idris
 
-This library can be used standalone or as a dependency for higher-level coverage analysis:
+This library can be used standalone or as a dependency for higher-level coverage analysis.
+
+### API Endpoints
+
+```idris
+-- From Coverage.Collector
+export parseBranchCoverage : String -> List BranchPoint
+export summarizeBranchCoverage : List BranchPoint -> BranchCoverageSummary
+export summarizeBranchCoverageWithFunctions : List (String, Nat) -> List BranchPoint -> BranchCoverageSummary
+export parseSchemeDefs : String -> List (String, Nat)
+
+-- From Coverage.TestHint
+export generateBranchHints : BranchCoverageSummary -> List BranchHint
+export summarizeBranchHints : List BranchHint -> BranchHintSummary
+export branchHintsToText : BranchHintSummary -> String
+export branchHintsToJson : List BranchHint -> String
+
+-- From Coverage.Report
+export branchCoverageSummaryJson : BranchCoverageSummary -> String
+export branchPointJson : BranchPoint -> String
+
+-- From Coverage.Aggregator
+export aggregateProjectWithBranches : List ModuleCoverage -> BranchCoverageSummary -> ProjectCoverage
+```
+
+### Example: Branch Coverage Analysis
 
 ```idris
 import Coverage.Types
+import Coverage.Collector
+import Coverage.TestHint
+import System.File
+
+analyzeCoverage : String -> String -> IO ()
+analyzeCoverage htmlPath ssPath = do
+  Right htmlContent <- readFile htmlPath
+    | Left err => putStrLn "Error reading HTML"
+  Right ssContent <- readFile ssPath
+    | Left err => putStrLn "Error reading SS"
+
+  -- 1. Parse function definitions from Scheme source
+  let funcDefs = parseSchemeDefs ssContent
+
+  -- 2. Parse branch coverage from annotated HTML
+  let branchPoints = parseBranchCoverage htmlContent
+
+  -- 3. Get summary with function associations
+  let summary = summarizeBranchCoverageWithFunctions funcDefs branchPoints
+
+  -- 4. Generate hints for uncovered branches
+  let hints = generateBranchHints summary
+  let hintSummary = summarizeBranchHints hints
+
+  -- 5. Output
+  putStrLn $ "Branch Coverage: " ++ show summary.branchPercent ++ "%"
+  putStrLn $ "Uncovered branches: " ++ show (length hints)
+  putStrLn $ branchHintsToText hintSummary
+```
+
+### Data Flow
+
+```
+lazy-idris audit
+    │
+    ├── Runs tests with --profile
+    │
+    ├── Gets audit-tests.ss.html (expression coverage)
+    │
+    └── Calls idris2-coverage:
+            │
+            ├── parseSchemeDefs(ss) → funcDefs
+            │
+            ├── parseBranchCoverage(html) → branchPoints
+            │
+            ├── summarizeBranchCoverageWithFunctions(funcDefs, branchPoints)
+            │   └── BranchCoverageSummary { branchPercent, uncoveredBranches }
+            │
+            ├── generateBranchHints(summary)
+            │   └── List BranchHint { function, line, problem, suggestion }
+            │
+            └── Output: JSON/Text with actionable hints
+```
+
+### State Space Analysis
+
+```idris
 import Coverage.StateSpace
 import Coverage.Linearity
-import Coverage.TestHint
 
 -- Analyze a function's state space
 analyzeMyFunc : AnalyzedFunction -> FunctionStateSpaceAnalysis
