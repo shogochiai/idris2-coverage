@@ -500,3 +500,154 @@ summarizeModuleHints modName hints =
       criticalH = sum $ map (.criticalCount) hints
       importantH = sum $ map (.importantCount) hints
   in MkModuleTestHintSummary modName (length hints) totalH criticalH importantH hints
+
+-- =============================================================================
+-- Branch Coverage Hints
+-- =============================================================================
+
+||| A hint for improving branch coverage
+public export
+record BranchHint where
+  constructor MkBranchHint
+  schemeFunc      : String         -- Function containing the uncovered branch
+  branchLine      : Nat            -- Line number in Scheme source
+  branchType      : String         -- "if", "case", "cond"
+  uncoveredPath   : String         -- Description of uncovered path
+  suggestedInput  : String         -- Input suggestion to hit this branch
+  priority        : HintPriority
+  rationale       : String
+
+public export
+Show BranchHint where
+  show h = "[" ++ show h.priority ++ "] " ++ h.schemeFunc
+        ++ " line " ++ show h.branchLine
+        ++ ": " ++ h.uncoveredPath
+
+mkCaseHint : String -> Nat -> (String, Nat) -> BranchHint
+mkCaseHint fn ln (pattern, _) =
+  MkBranchHint fn ln "case" ("pattern not matched: " ++ pattern)
+    ("Provide input that matches: " ++ pattern)
+    Nice
+    ("This case pattern was never matched during testing")
+
+mkCondHint : String -> Nat -> (String, Nat) -> BranchHint
+mkCondHint fn ln (cond, _) =
+  MkBranchHint fn ln "cond" ("condition not satisfied: " ++ cond)
+    ("Provide input where: " ++ cond ++ " is true")
+    Nice
+    ("This conditional branch was never taken")
+
+ifBranchHints : String -> BranchPoint -> List BranchHint
+ifBranchHints fn bp' =
+  let thenCovered = any (\(lbl, cnt) => lbl == "then" && cnt > 0) bp'.branchDetails
+      elseCovered = any (\(lbl, cnt) => lbl == "else" && cnt > 0) bp'.branchDetails
+  in (if not thenCovered
+         then [MkBranchHint fn bp'.line "if" "then-branch not taken"
+               "Provide input where condition is TRUE"
+               Important
+               "The true-case of this if expression was never executed"]
+         else [])
+     ++ (if not elseCovered
+            then [MkBranchHint fn bp'.line "if" "else-branch not taken"
+                  "Provide input where condition is FALSE"
+                  Important
+                  "The false-case of this if expression was never executed"]
+            else [])
+
+caseBranchHints : String -> BranchPoint -> List BranchHint
+caseBranchHints fn bp' =
+  let uncoveredPatterns = filter (\(_, cnt) => cnt == 0) bp'.branchDetails
+  in map (mkCaseHint fn bp'.line) uncoveredPatterns
+
+condBranchHints : String -> BranchPoint -> List BranchHint
+condBranchHints fn bp' =
+  let uncoveredConds = filter (\(_, cnt) => cnt == 0) bp'.branchDetails
+  in map (mkCondHint fn bp'.line) uncoveredConds
+
+||| Analyze a branch point and generate hints for uncovered branches
+export
+branchPointToHints : (funcName : String) -> BranchPoint -> List BranchHint
+branchPointToHints funcName bp =
+  if bp.coveredBranches >= bp.totalBranches
+     then []  -- Fully covered
+     else case bp.branchType of
+       IfBranch   => ifBranchHints funcName bp
+       CaseBranch => caseBranchHints funcName bp
+       CondBranch => condBranchHints funcName bp
+
+||| Generate branch hints from branch coverage summary
+export
+generateBranchHints : BranchCoverageSummary -> List BranchHint
+generateBranchHints summary =
+  concatMap (\(fn, bp) => branchPointToHints fn bp) summary.uncoveredBranches
+
+||| Branch hint summary for reporting
+public export
+record BranchHintSummary where
+  constructor MkBranchHintSummary
+  totalUncoveredBranches : Nat
+  criticalHints          : List BranchHint
+  importantHints         : List BranchHint
+  niceHints              : List BranchHint
+
+export
+Show BranchHintSummary where
+  show s = "Branch Hints: " ++ show s.totalUncoveredBranches ++ " uncovered branches"
+        ++ " (" ++ show (length s.criticalHints) ++ " critical, "
+        ++ show (length s.importantHints) ++ " important)"
+
+||| Summarize branch hints by priority
+export
+summarizeBranchHints : List BranchHint -> BranchHintSummary
+summarizeBranchHints hints =
+  let critical = filter (\h => h.priority == Critical) hints
+      important = filter (\h => h.priority == Important) hints
+      nice = filter (\h => h.priority == Nice) hints
+  in MkBranchHintSummary (length hints) critical important nice
+
+||| Convert branch hint to JSON
+export
+branchHintToJson : BranchHint -> String
+branchHintToJson h =
+  "{\n"
+  ++ "    \"function\": \"" ++ h.schemeFunc ++ "\",\n"
+  ++ "    \"line\": " ++ show h.branchLine ++ ",\n"
+  ++ "    \"branch_type\": \"" ++ h.branchType ++ "\",\n"
+  ++ "    \"uncovered_path\": \"" ++ h.uncoveredPath ++ "\",\n"
+  ++ "    \"suggested_input\": \"" ++ h.suggestedInput ++ "\",\n"
+  ++ "    \"priority\": \"" ++ show h.priority ++ "\",\n"
+  ++ "    \"rationale\": \"" ++ h.rationale ++ "\"\n"
+  ++ "  }"
+
+||| Generate JSON report for all branch hints
+export
+branchHintsToJson : List BranchHint -> String
+branchHintsToJson hints =
+  "{\n"
+  ++ "  \"total_hints\": " ++ show (length hints) ++ ",\n"
+  ++ "  \"hints\": [\n  "
+  ++ fastConcat (intersperse ",\n  " (map branchHintToJson hints))
+  ++ "\n  ]\n"
+  ++ "}"
+
+formatBranchHint : BranchHint -> String
+formatBranchHint h =
+  "  * " ++ h.schemeFunc ++ " (line " ++ show h.branchLine ++ ")\n"
+  ++ "    Problem: " ++ h.uncoveredPath ++ "\n"
+  ++ "    Solution: " ++ h.suggestedInput ++ "\n\n"
+
+formatBranchSection : String -> List BranchHint -> String
+formatBranchSection _ [] = ""
+formatBranchSection title hints =
+  "--- " ++ title ++ " ---\n"
+  ++ fastConcat (map formatBranchHint hints)
+  ++ "\n"
+
+||| Generate human-readable branch coverage improvement recommendations
+export
+branchHintsToText : BranchHintSummary -> String
+branchHintsToText summary =
+  "=== Branch Coverage Improvement Hints ===\n\n"
+  ++ "Uncovered branches: " ++ show summary.totalUncoveredBranches ++ "\n\n"
+  ++ formatBranchSection "IMPORTANT (should fix)" summary.importantHints
+  ++ formatBranchSection "NICE TO HAVE" summary.niceHints

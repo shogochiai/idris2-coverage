@@ -418,6 +418,79 @@ Show ComplexityMetrics where
         ++ ", split=" ++ show c.shouldSplit ++ ")"
 
 -- =============================================================================
+-- Branch Coverage Types
+-- =============================================================================
+
+||| Type of branch construct in Scheme code
+public export
+data BranchType : Type where
+  IfBranch   : BranchType    -- (if cond then else)
+  CaseBranch : BranchType    -- (case expr [pattern body]...)
+  CondBranch : BranchType    -- (cond [test body]...)
+
+public export
+Show BranchType where
+  show IfBranch   = "if"
+  show CaseBranch = "case"
+  show CondBranch = "cond"
+
+public export
+Eq BranchType where
+  IfBranch   == IfBranch   = True
+  CaseBranch == CaseBranch = True
+  CondBranch == CondBranch = True
+  _          == _          = False
+
+||| A single branch decision point with coverage info
+public export
+record BranchPoint where
+  constructor MkBranchPoint
+  line            : Nat
+  char            : Nat
+  branchType      : BranchType
+  totalBranches   : Nat       -- 2 for if, N for case/cond
+  coveredBranches : Nat       -- How many branches had count > 0
+  branchDetails   : List (String, Nat)  -- (branchLabel, hitCount)
+
+public export
+Show BranchPoint where
+  show bp = show bp.branchType ++ "@" ++ show bp.line ++ ":" ++ show bp.char
+         ++ " [" ++ show bp.coveredBranches ++ "/" ++ show bp.totalBranches ++ "]"
+
+public export
+Eq BranchPoint where
+  bp1 == bp2 = bp1.line == bp2.line && bp1.char == bp2.char
+
+||| Branch coverage summary for a function
+public export
+record FunctionBranchCoverage where
+  constructor MkFunctionBranchCoverage
+  schemeFunc      : String
+  branchPoints    : List BranchPoint
+  totalBranches   : Nat
+  coveredBranches : Nat
+  branchPercent   : Double
+
+public export
+Show FunctionBranchCoverage where
+  show fbc = fbc.schemeFunc ++ ": " ++ show fbc.branchPercent ++ "% branch coverage"
+
+||| Project-level branch coverage summary
+public export
+record BranchCoverageSummary where
+  constructor MkBranchCoverageSummary
+  totalBranchPoints : Nat
+  totalBranches     : Nat
+  coveredBranches   : Nat
+  branchPercent     : Double
+  uncoveredBranches : List (String, BranchPoint)  -- (funcName, branchPoint)
+
+public export
+Show BranchCoverageSummary where
+  show bcs = "Branch coverage: " ++ show bcs.coveredBranches ++ "/" ++ show bcs.totalBranches
+          ++ " (" ++ show bcs.branchPercent ++ "%)"
+
+-- =============================================================================
 -- Extended Coverage Report
 -- =============================================================================
 

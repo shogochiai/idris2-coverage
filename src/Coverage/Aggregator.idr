@@ -149,7 +149,7 @@ aggregateModule path functions =
 -- Project Level Aggregation
 -- =============================================================================
 
-||| Aggregate to project level
+||| Aggregate to project level (without branch coverage)
 export
 aggregateProject : (modules : List ModuleCoverage) -> ProjectCoverage
 aggregateProject modules =
@@ -159,6 +159,19 @@ aggregateProject modules =
                       then cast coveredFuncs / cast totalFuncs * 100.0
                       else 0.0
   in MkProjectCoverage totalFuncs coveredFuncs avgPercent Nothing
+
+||| Aggregate to project level with branch coverage
+export
+aggregateProjectWithBranches : (modules : List ModuleCoverage)
+                            -> (branchSummary : BranchCoverageSummary)
+                            -> ProjectCoverage
+aggregateProjectWithBranches modules branchSummary =
+  let totalFuncs = sum $ map (.functionsTotal) modules
+      coveredFuncs = sum $ map (.functionsCovered) modules
+      avgPercent = if totalFuncs > 0
+                      then cast coveredFuncs / cast totalFuncs * 100.0
+                      else 0.0
+  in MkProjectCoverage totalFuncs coveredFuncs avgPercent (Just branchSummary.branchPercent)
 
 -- =============================================================================
 -- Full Aggregation Pipeline

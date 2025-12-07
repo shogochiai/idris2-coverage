@@ -100,6 +100,49 @@ coverageReportJson r =
      "}"
 
 -- =============================================================================
+-- Branch Coverage JSON Generation
+-- =============================================================================
+
+||| Generate JSON for a single BranchPoint
+export
+branchPointJson : BranchPoint -> String
+branchPointJson bp =
+  let detailsJson = "[" ++ fastConcat (intersperse ", " (map pairJson bp.branchDetails)) ++ "]"
+  in "    {\n" ++
+     "      \"line\": " ++ show bp.line ++ ",\n" ++
+     "      \"char\": " ++ show bp.char ++ ",\n" ++
+     "      \"type\": \"" ++ show bp.branchType ++ "\",\n" ++
+     "      \"total_branches\": " ++ show bp.totalBranches ++ ",\n" ++
+     "      \"covered_branches\": " ++ show bp.coveredBranches ++ ",\n" ++
+     "      \"details\": " ++ detailsJson ++ "\n" ++
+     "    }"
+  where
+    pairJson : (String, Nat) -> String
+    pairJson (label, cnt) = "{\"label\": \"" ++ escapeJson label ++ "\", \"count\": " ++ show cnt ++ "}"
+
+||| Generate JSON for BranchCoverageSummary
+export
+branchCoverageSummaryJson : BranchCoverageSummary -> String
+branchCoverageSummaryJson bcs =
+  "{\n" ++
+  "    \"total_branch_points\": " ++ show bcs.totalBranchPoints ++ ",\n" ++
+  "    \"total_branches\": " ++ show bcs.totalBranches ++ ",\n" ++
+  "    \"covered_branches\": " ++ show bcs.coveredBranches ++ ",\n" ++
+  "    \"branch_percent\": " ++ show bcs.branchPercent ++ "\n" ++
+  "  }"
+
+||| Generate JSON for branch coverage with details
+export
+branchCoverageDetailJson : List BranchPoint -> String
+branchCoverageDetailJson bps =
+  let branchesJson = fastConcat $ intersperse ",\n" $ map branchPointJson bps
+  in "{\n" ++
+     "  \"branch_points\": [\n" ++
+     branchesJson ++ "\n" ++
+     "  ]\n" ++
+     "}"
+
+-- =============================================================================
 -- Text Report Generation
 -- =============================================================================
 
@@ -115,9 +158,13 @@ coverageReportText r =
   where
     formatProject : ProjectCoverage -> String
     formatProject p =
-      "Project Summary:\n" ++
-      "  Functions: " ++ show p.coveredFunctions ++ "/" ++ show p.totalFunctions ++ " covered\n" ++
-      "  Line Coverage: " ++ show p.lineCoveragePercent ++ "%\n"
+      let branchStr = case p.branchCoveragePercent of
+                        Nothing => "N/A"
+                        Just b => show b ++ "%"
+      in "Project Summary:\n" ++
+         "  Functions: " ++ show p.coveredFunctions ++ "/" ++ show p.totalFunctions ++ " covered\n" ++
+         "  Line Coverage: " ++ show p.lineCoveragePercent ++ "%\n" ++
+         "  Branch Coverage: " ++ branchStr ++ "\n"
 
     formatModules : List ModuleCoverage -> String
     formatModules ms =

@@ -1,5 +1,9 @@
 # Coverage SPEC.toml - Code Coverage Module for Idris2
 
+[test]
+test_dir = "src/Coverage/Tests"
+test_glob = "**/*.idr"
+
 [definitions]
 module_self = "src/Coverage"
 fn_collectProfile = "collectProfile"

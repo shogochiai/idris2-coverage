@@ -235,6 +235,189 @@ collectProfile htmlContent schemeContent =
            Just (funcName, _) => Just $ { schemeFunc := funcName } hit
 
 -- =============================================================================
+-- Branch Coverage Parsing
+-- =============================================================================
+
+||| Raw span data from HTML (for branch analysis)
+record SpanData where
+  constructor MkSpanData
+  line    : Nat
+  char    : Nat
+  count   : Nat
+  content : String
+
+||| Extract spans with their content for branch analysis
+||| Format: <span class=pcN title="line L char C count N">content</span>
+export
+extractSpansWithContent : String -> List SpanData
+extractSpansWithContent content = go (unpack content) []
+  where
+    parseTitle : List Char -> Maybe (Nat, Nat, Nat)
+    parseTitle cs =
+      let s = pack cs
+          parts = words s
+      in findParts parts Nothing Nothing Nothing
+      where
+        findParts : List String -> Maybe Nat -> Maybe Nat -> Maybe Nat -> Maybe (Nat, Nat, Nat)
+        findParts [] (Just l) (Just c) (Just cnt) = Just (l, c, cnt)
+        findParts [] _ _ _ = Nothing
+        findParts (x :: xs) ml mc mcnt =
+          if x == "line"
+             then case xs of
+                    (n :: rest) => case parsePositive n of
+                                     Just ln => findParts rest (Just ln) mc mcnt
+                                     Nothing => findParts xs ml mc mcnt
+                    _ => findParts xs ml mc mcnt
+             else if x == "char"
+             then case xs of
+                    (n :: rest) => case parsePositive n of
+                                     Just ch => findParts rest ml (Just ch) mcnt
+                                     Nothing => findParts xs ml mc mcnt
+                    _ => findParts xs ml mc mcnt
+             else if x == "count"
+             then case xs of
+                    (n :: rest) => case parsePositive n of
+                                     Just ct => findParts rest ml mc (Just ct)
+                                     Nothing => findParts xs ml mc mcnt
+                    _ => findParts xs ml mc mcnt
+             else findParts xs ml mc mcnt
+
+    extractContent : List Char -> (List Char, List Char)
+    extractContent cs = break (== '<') cs
+
+    go : List Char -> List SpanData -> List SpanData
+    go [] acc = reverse acc
+    -- Match: title="..."
+    go ('t' :: 'i' :: 't' :: 'l' :: 'e' :: '=' :: '"' :: rest) acc =
+      let (titleChars, afterTitle) = break (== '"') rest
+          afterQuote = drop 1 afterTitle
+          -- Skip to > then extract content until </span>
+          (_, afterGt) = break (== '>') afterQuote
+          afterGtSkip = drop 1 afterGt
+          (contentChars, remaining) = extractContent afterGtSkip
+      in case parseTitle titleChars of
+           Nothing => assert_total $ go remaining acc
+           Just (l, c, cnt) =>
+             let sd = MkSpanData l c cnt (pack contentChars)
+             in assert_total $ go remaining (sd :: acc)
+    go (_ :: rest) acc = assert_total $ go rest acc
+
+||| Identify branch points from spans
+||| Looks for patterns like "(if ", "(case ", "(cond "
+export
+identifyBranchPoints : List SpanData -> List BranchPoint
+identifyBranchPoints spans =
+  let -- Find all branch-starting spans
+      branchStarts = filter isBranchStart spans
+  in mapMaybe (analyzeBranch spans) branchStarts
+  where
+    isBranchStart : SpanData -> Bool
+    isBranchStart sd =
+      isPrefixOf "(if " sd.content
+      || isPrefixOf "(case " sd.content
+      || isPrefixOf "(cond " sd.content
+
+    getBranchType : String -> BranchType
+    getBranchType s =
+      if isPrefixOf "(if " s then IfBranch
+      else if isPrefixOf "(case " s then CaseBranch
+      else CondBranch
+
+    countBranches : BranchType -> List SpanData -> Nat -> (Nat, Nat, List (String, Nat))
+    countBranches IfBranch spans startLine =
+      -- For if: assume 2 branches (then/else)
+      -- Look for expressions after the condition
+      let afterCond = filter (\sd => sd.line >= startLine) spans
+          -- Simple heuristic: count unique execution counts as branch indicator
+          counts = map (\sd => sd.count) afterCond
+          hasZero = any (== 0) counts
+          hasNonZero = any (> 0) counts
+          covered = if hasZero && hasNonZero then 1
+                    else if hasNonZero then 2 else 0
+      in (2, covered, [("then", if hasNonZero then 1 else 0), ("else", if hasZero then 0 else 1)])
+    countBranches CaseBranch spans startLine =
+      -- For case: count [pattern ...] occurrences
+      let caseSpans = filter (\sd => sd.line >= startLine && isPrefixOf "[" sd.content) spans
+          totNum = max 2 (length caseSpans)
+          covNum = length $ filter (\sd => sd.count > 0) caseSpans
+      in (totNum, covNum, map (\sd => (sd.content, sd.count)) caseSpans)
+    countBranches CondBranch spans startLine =
+      -- Similar to case
+      let condSpans = filter (\sd => sd.line >= startLine && isPrefixOf "[" sd.content) spans
+          totNum = max 2 (length condSpans)
+          covNum = length $ filter (\sd => sd.count > 0) condSpans
+      in (totNum, covNum, map (\sd => (sd.content, sd.count)) condSpans)
+
+    makeBranchPoint : Nat -> Nat -> BranchType -> (Nat, Nat, List (String, Nat)) -> Maybe BranchPoint
+    makeBranchPoint ln ch bt result =
+      let totBranches = fst result
+          covBranches = fst (snd result)
+          branchDetails = snd (snd result)
+      in if totBranches > 0
+            then Just $ MkBranchPoint ln ch bt totBranches covBranches branchDetails
+            else Nothing
+
+    -- For an if-branch, we need to find then and else branches
+    -- This is simplified: we look at spans on the same/nearby lines
+    analyzeBranch : List SpanData -> SpanData -> Maybe BranchPoint
+    analyzeBranch allSpans branchSpan =
+      let btype = getBranchType branchSpan.content
+          nearbySpans = filter (\sd => sd.line >= branchSpan.line
+                                    && sd.line <= branchSpan.line + 10) allSpans
+          branchResult = countBranches btype nearbySpans branchSpan.line
+      in makeBranchPoint branchSpan.line branchSpan.char btype branchResult
+
+||| Parse branch coverage from annotated HTML
+export
+parseBranchCoverage : String -> List BranchPoint
+parseBranchCoverage htmlContent =
+  let spans = extractSpansWithContent htmlContent
+  in identifyBranchPoints spans
+
+||| Calculate branch coverage summary from branch points
+export
+summarizeBranchCoverage : List BranchPoint -> BranchCoverageSummary
+summarizeBranchCoverage bps =
+  let totalPoints = length bps
+      totalBranches = sum $ map (.totalBranches) bps
+      coveredBranches = sum $ map (.coveredBranches) bps
+      pct = if totalBranches == 0 then 100.0
+            else cast coveredBranches / cast totalBranches * 100.0
+      uncovered = filter (\bp => bp.coveredBranches < bp.totalBranches) bps
+  in MkBranchCoverageSummary totalPoints totalBranches coveredBranches pct
+       (map (\bp => ("unknown", bp)) uncovered)
+
+||| Associate branch points with function names based on Scheme definitions
+export
+associateBranchesWithFunctions : List (String, Nat) -> List BranchPoint -> List (String, BranchPoint)
+associateBranchesWithFunctions funcDefs bps =
+  map (findFunction funcDefs) bps
+  where
+    -- Find the function that contains this branch point
+    findFunction : List (String, Nat) -> BranchPoint -> (String, BranchPoint)
+    findFunction defs bp =
+      let -- Functions that start before this branch
+          candidates = filter (\(_, startLine) => startLine <= bp.line) defs
+          -- Sort by start line descending to get the closest one
+          sorted = sortBy (\(_, l1), (_, l2) => compare l2 l1) candidates
+      in case sorted of
+           [] => ("unknown", bp)
+           ((name, _) :: _) => (name, bp)
+
+||| Calculate branch coverage summary with function associations
+export
+summarizeBranchCoverageWithFunctions : List (String, Nat) -> List BranchPoint -> BranchCoverageSummary
+summarizeBranchCoverageWithFunctions funcDefs bps =
+  let totalPoints = length bps
+      totalBranches = sum $ map (.totalBranches) bps
+      coveredBranches = sum $ map (.coveredBranches) bps
+      pct = if totalBranches == 0 then 100.0
+            else cast coveredBranches / cast totalBranches * 100.0
+      uncovered = filter (\bp => bp.coveredBranches < bp.totalBranches) bps
+      associated = associateBranchesWithFunctions funcDefs uncovered
+  in MkBranchCoverageSummary totalPoints totalBranches coveredBranches pct associated
+
+-- =============================================================================
 -- File Reading (partial - involves IO)
 -- =============================================================================
 
