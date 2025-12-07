@@ -25,6 +25,7 @@ import System
 -- Linearity Tests (LIN_001-004)
 -- =============================================================================
 
+||| REQ_COV_LIN_001
 covering
 test_LIN_001 : IO Bool
 test_LIN_001 = do
@@ -33,6 +34,7 @@ test_LIN_001 = do
   let qw = parseQuantity "ω"
   pure $ q0 == Q0 && q1 == Q1 && qw == QW
 
+||| REQ_COV_LIN_002
 covering
 test_LIN_002 : IO Bool
 test_LIN_002 = do
@@ -40,6 +42,7 @@ test_LIN_002 = do
   let p1 = MkLinearParam (Just "y") "Int" Q1 Nothing
   pure $ isErased p0 && not (isErased p1)
 
+||| REQ_COV_LIN_003
 covering
 test_LIN_003 : IO Bool
 test_LIN_003 = do
@@ -47,6 +50,7 @@ test_LIN_003 = do
   let pW = MkLinearParam (Just "y") "Int" QW Nothing
   pure $ isLinear p1 && not (isLinear pW)
 
+||| REQ_COV_LIN_004
 covering
 test_LIN_004 : IO Bool
 test_LIN_004 = do
@@ -59,6 +63,7 @@ test_LIN_004 = do
 -- Type Analyzer Tests (TYP_001-004)
 -- =============================================================================
 
+||| REQ_COV_TYP_001
 covering
 test_TYP_001 : IO Bool
 test_TYP_001 = do
@@ -66,12 +71,14 @@ test_TYP_001 = do
   let params = extractLinearParams sig
   pure $ length params >= 1
 
+||| REQ_COV_TYP_002
 covering
 test_TYP_002 : IO Bool
 test_TYP_002 = do
   let analyzed = analyzeFunction "process" "String -> IO (Either Error Result)"
   pure $ analyzed.name == "process"
 
+||| REQ_COV_TYP_003
 covering
 test_TYP_003 : IO Bool
 test_TYP_003 = do
@@ -79,6 +86,7 @@ test_TYP_003 = do
   let linearParams = filter isLinear analyzed.params
   pure $ length linearParams >= 0  -- Check extraction works
 
+||| REQ_COV_TYP_004
 covering
 test_TYP_004 : IO Bool
 test_TYP_004 = do
@@ -89,6 +97,7 @@ test_TYP_004 = do
 -- State Space Tests (SPC_001-004)
 -- =============================================================================
 
+||| REQ_COV_SPC_001
 covering
 test_SPC_001 : IO Bool
 test_SPC_001 = do
@@ -99,6 +108,7 @@ test_SPC_001 = do
     Bounded n => n == 10
     _ => False
 
+||| REQ_COV_SPC_002
 covering
 test_SPC_002 : IO Bool
 test_SPC_002 = do
@@ -109,6 +119,7 @@ test_SPC_002 = do
     Bounded n => n == 10
     _ => False
 
+||| REQ_COV_SPC_003
 covering
 test_SPC_003 : IO Bool
 test_SPC_003 = do
@@ -119,6 +130,7 @@ test_SPC_003 = do
     Bounded _ => True
     _ => False
 
+||| REQ_COV_SPC_004
 covering
 test_SPC_004 : IO Bool
 test_SPC_004 = do
@@ -134,6 +146,7 @@ test_SPC_004 = do
 -- Path Analysis Tests (PTH_001-004)
 -- =============================================================================
 
+||| REQ_COV_PTH_001
 covering
 test_PTH_001 : IO Bool
 test_PTH_001 = do
@@ -143,6 +156,7 @@ test_PTH_001 = do
   let justPat = isEarlyExitPattern "Just x"
   pure $ isJust nothingPat && isJust leftPat && isJust nilPat && not (isJust justPat)
 
+||| REQ_COV_PTH_002
 covering
 test_PTH_002 : IO Bool
 test_PTH_002 = do
@@ -151,6 +165,7 @@ test_PTH_002 = do
   let pathAnalysis = analyzeFunctionPaths "process" params
   pure $ pathAnalysis.totalBranches >= 0
 
+||| REQ_COV_PTH_003
 covering
 test_PTH_003 : IO Bool
 test_PTH_003 = do
@@ -158,6 +173,7 @@ test_PTH_003 = do
   let pattern = analyzePattern "xs :: rest"
   pure $ pattern.reachability == Conditional
 
+||| REQ_COV_PTH_004
 covering
 test_PTH_004 : IO Bool
 test_PTH_004 = do
@@ -169,6 +185,7 @@ test_PTH_004 = do
 -- Complexity Tests (CPX_001-004)
 -- =============================================================================
 
+||| REQ_COV_CPX_001
 covering
 test_CPX_001 : IO Bool
 test_CPX_001 = do
@@ -179,6 +196,7 @@ test_CPX_001 = do
   let factors = calculateFactors defaultComplexityConfig params (Finite 10) 2 5
   pure $ factors.totalScore >= 0
 
+||| REQ_COV_CPX_002
 covering
 test_CPX_002 : IO Bool
 test_CPX_002 = do
@@ -186,6 +204,7 @@ test_CPX_002 = do
   let factors = calculateFactors defaultComplexityConfig params (Finite 10) 1 2
   pure $ factors.paramFactor >= 0
 
+||| REQ_COV_CPX_003
 covering
 test_CPX_003 : IO Bool
 test_CPX_003 = do
@@ -193,6 +212,7 @@ test_CPX_003 = do
   let factors = calculateFactors defaultComplexityConfig params Unbounded 0 1
   pure $ factors.stateFactor >= 0
 
+||| REQ_COV_CPX_004
 covering
 test_CPX_004 : IO Bool
 test_CPX_004 = do
@@ -204,6 +224,7 @@ test_CPX_004 = do
 -- Source Analyzer Tests (SRC_001-004)
 -- =============================================================================
 
+||| REQ_COV_SRC_001
 covering
 test_SRC_001 : IO Bool
 test_SRC_001 = do
@@ -211,6 +232,7 @@ test_SRC_001 = do
   let funcs = analyzeSource source
   pure $ length funcs >= 1
 
+||| REQ_COV_SRC_002
 covering
 test_SRC_002 : IO Bool
 test_SRC_002 = do
@@ -218,6 +240,7 @@ test_SRC_002 = do
   let exports = analyzeSource source
   pure $ length exports >= 0
 
+||| REQ_COV_SRC_003
 covering
 test_SRC_003 : IO Bool
 test_SRC_003 = do
@@ -225,6 +248,7 @@ test_SRC_003 = do
   let funcs = analyzeSource source
   pure $ True -- Import detection tested separately
 
+||| REQ_COV_SRC_004
 covering
 test_SRC_004 : IO Bool
 test_SRC_004 = do
@@ -236,6 +260,7 @@ test_SRC_004 = do
 -- Collector Tests (COL_001-004)
 -- =============================================================================
 
+||| REQ_COV_COL_001
 covering
 test_COL_001 : IO Bool
 test_COL_001 = do
@@ -243,18 +268,21 @@ test_COL_001 = do
   let hits = parseProfileHtml html
   pure $ length hits >= 1
 
+||| REQ_COV_COL_002
 covering
 test_COL_002 : IO Bool
 test_COL_002 = do
   let defs = parseSchemeDefs "(define Main-add (lambda (x y) (+ x y)))"
   pure $ length defs >= 1
 
+||| REQ_COV_COL_003
 covering
 test_COL_003 : IO Bool
 test_COL_003 = do
   let defs = parseSchemeDefs "(define PreludeC-45Show-u--show_Show_Int (lambda (x) x))"
   pure $ length defs >= 1
 
+||| REQ_COV_COL_004
 covering
 test_COL_004 : IO Bool
 test_COL_004 = do
@@ -266,6 +294,7 @@ test_COL_004 = do
 -- Report Tests (REP_001-004)
 -- =============================================================================
 
+||| REQ_COV_REP_001
 covering
 test_REP_001 : IO Bool
 test_REP_001 = do
@@ -273,6 +302,7 @@ test_REP_001 = do
   let json = functionCoverageJson fc
   pure $ isInfixOf "module" json && isInfixOf "name" json
 
+||| REQ_COV_REP_002
 covering
 test_REP_002 : IO Bool
 test_REP_002 = do
@@ -280,6 +310,7 @@ test_REP_002 = do
   let json = functionCoverageJson fc
   pure $ isInfixOf "coverage_percent" json
 
+||| REQ_COV_REP_003
 covering
 test_REP_003 : IO Bool
 test_REP_003 = do
@@ -287,6 +318,7 @@ test_REP_003 = do
   let json = functionCoverageJson fc
   pure $ isInfixOf "covered_lines" json
 
+||| REQ_COV_REP_004
 covering
 test_REP_004 : IO Bool
 test_REP_004 = do
@@ -299,12 +331,14 @@ test_REP_004 = do
 -- Aggregator Tests (AGG_001-004)
 -- =============================================================================
 
+||| REQ_COV_AGG_001
 covering
 test_AGG_001 : IO Bool
 test_AGG_001 = do
   let fc = coveredFunction "Mod" "func" 10 ["REQ_001", "REQ_002"]
   pure $ length fc.calledByTests == 2
 
+||| REQ_COV_AGG_002
 covering
 test_AGG_002 : IO Bool
 test_AGG_002 = do
@@ -313,6 +347,7 @@ test_AGG_002 = do
   let mc = aggregateModule "A.idr" [fc1, fc2]
   pure $ mc.functionsTotal == 2
 
+||| REQ_COV_AGG_003
 covering
 test_AGG_003 : IO Bool
 test_AGG_003 = do
@@ -321,6 +356,7 @@ test_AGG_003 = do
   let mc = aggregateModule "A.idr" [fc1, fc2]
   pure $ mc.functionsCovered >= 1
 
+||| REQ_COV_AGG_004
 covering
 test_AGG_004 : IO Bool
 test_AGG_004 = do
@@ -333,12 +369,14 @@ test_AGG_004 = do
 -- Test Runner Tests (RUN_001-004)
 -- =============================================================================
 
+||| REQ_COV_RUN_001
 covering
 test_RUN_001 : IO Bool
 test_RUN_001 = do
   let defs = parseSchemeDefs "(define Test-func (lambda (x) x))"
   pure $ length defs == 1
 
+||| REQ_COV_RUN_002
 covering
 test_RUN_002 : IO Bool
 test_RUN_002 = do
@@ -346,6 +384,7 @@ test_RUN_002 = do
   let matches = matchGlob "*.idr" "test.idr"
   pure matches
 
+||| REQ_COV_RUN_003
 covering
 test_RUN_003 : IO Bool
 test_RUN_003 = do
@@ -353,6 +392,7 @@ test_RUN_003 = do
   let r = MkTestProfileResult "T1" True []
   pure $ r.testPassed
 
+||| REQ_COV_RUN_004
 covering
 test_RUN_004 : IO Bool
 test_RUN_004 = do
@@ -366,6 +406,7 @@ test_RUN_004 = do
 -- Test Hint Tests (HNT_001-004)
 -- =============================================================================
 
+||| REQ_COV_HNT_001
 covering
 test_HNT_001 : IO Bool
 test_HNT_001 = do
@@ -373,6 +414,7 @@ test_HNT_001 = do
   let hints = happyPathHints analyzed
   pure $ length hints >= 1
 
+||| REQ_COV_HNT_002
 covering
 test_HNT_002 : IO Bool
 test_HNT_002 = do
@@ -380,6 +422,7 @@ test_HNT_002 = do
   let hints = exhaustivePathHints defaultConfig analyzed
   pure $ True
 
+||| REQ_COV_HNT_003
 covering
 test_HNT_003 : IO Bool
 test_HNT_003 = do
@@ -387,6 +430,7 @@ test_HNT_003 = do
   let hints = exhaustivePathHints defaultConfig analyzed
   pure $ True
 
+||| REQ_COV_HNT_004
 covering
 test_HNT_004 : IO Bool
 test_HNT_004 = do
