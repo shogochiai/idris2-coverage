@@ -109,6 +109,7 @@ combineWithTestCase pName v cat tc =
     tc.priority
 
 ||| Generate combinations of test cases
+export
 generateCombinations : StateSpaceConfig -> List LinearParam -> List EstimatedTestCase
 generateCombinations _ [] = [MkEstimatedTestCase [] "empty" 0]
 generateCombinations cfg (p :: ps) =

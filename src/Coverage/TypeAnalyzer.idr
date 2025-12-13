@@ -23,12 +23,14 @@ strDrop : Nat -> String -> String
 strDrop n s = substr n (length s `minus` n) s
 
 ||| Safe last element of a list
+export
 safeLast : List a -> Maybe a
 safeLast [] = Nothing
 safeLast [x] = Just x
 safeLast (_ :: xs) = safeLast xs
 
 ||| Safe init (all but last) of a list
+export
 safeInit : List a -> List a
 safeInit [] = []
 safeInit [_] = []

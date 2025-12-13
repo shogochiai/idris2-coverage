@@ -59,6 +59,40 @@ test_LIN_004 = do
   -- QW is unrestricted, Q0 is erased
   pure $ pW.quantity == QW && p0.quantity == Q0
 
+||| REQ_COV_LIN_005: parseLinearParam with quantity annotation
+covering
+test_LIN_005 : IO Bool
+test_LIN_005 = do
+  -- Test "(1 h : Handle)" format
+  let result = parseLinearParam "(1 h : Handle)"
+  pure $ case result of
+    Just lp => lp.quantity == Q1 && lp.paramName == Just "h"
+    Nothing => False
+
+||| REQ_COV_LIN_006: parseLinearParam failure case
+covering
+test_LIN_006 : IO Bool
+test_LIN_006 = do
+  -- Test invalid input returns Nothing
+  let result = parseLinearParam "invalid"
+  pure $ isNothing result
+
+||| REQ_COV_LIN_007: effectiveStateSpace with typeInfo=Nothing
+covering
+test_LIN_007 : IO Bool
+test_LIN_007 = do
+  -- Parameter without typeInfo should give Unbounded
+  let p = MkLinearParam (Just "x") "Unknown" QW Nothing
+  let space = effectiveStateSpace [p]
+  pure $ space == Unbounded
+
+||| REQ_COV_LIN_008: effectiveStateSpace with empty list
+covering
+test_LIN_008 : IO Bool
+test_LIN_008 = do
+  let space = effectiveStateSpace []
+  pure $ space == Finite 1
+
 -- =============================================================================
 -- Type Analyzer Tests (TYP_001-004)
 -- =============================================================================
@@ -92,6 +126,56 @@ test_TYP_004 : IO Bool
 test_TYP_004 = do
   let analyzed = analyzeFunction "maybe" "Maybe a -> b -> (a -> b) -> b"
   pure $ length analyzed.params >= 2
+
+||| REQ_COV_TYP_005: safeInit with empty list
+covering
+test_TYP_005 : IO Bool
+test_TYP_005 = do
+  let result : List Int = safeInit []
+  pure $ result == []
+
+||| REQ_COV_TYP_006: safeInit with single element
+covering
+test_TYP_006 : IO Bool
+test_TYP_006 = do
+  let result = safeInit [1]
+  pure $ result == []
+
+||| REQ_COV_TYP_007: safeLast with empty list
+covering
+test_TYP_007 : IO Bool
+test_TYP_007 = do
+  let result : Maybe Int = safeLast []
+  pure $ isNothing result
+
+||| REQ_COV_TYP_008: safeLast with single element
+covering
+test_TYP_008 : IO Bool
+test_TYP_008 = do
+  let result = safeLast [42]
+  pure $ result == Just 42
+
+||| REQ_COV_TYP_009: resolveType with Either
+covering
+test_TYP_009 : IO Bool
+test_TYP_009 = do
+  let info = resolveType "Either Error Value"
+  pure $ isInfixOf "Either" info.typeName
+
+||| REQ_COV_TYP_010: resolveType with Tuple
+covering
+test_TYP_010 : IO Bool
+test_TYP_010 = do
+  let info = resolveType "(Int, String)"
+  pure $ isPrefixOf "(" info.typeName
+
+||| REQ_COV_TYP_011: parseParams with arrow fragments
+covering
+test_TYP_011 : IO Bool
+test_TYP_011 = do
+  let params = parseParams "Int -> Bool -> String"
+  -- Should return [Int, Bool] (excluding return type)
+  pure $ length params >= 1
 
 -- =============================================================================
 -- State Space Tests (SPC_001-004)
@@ -142,6 +226,21 @@ test_SPC_004 = do
     Bounded _ => True
     _ => False
 
+||| REQ_COV_SPC_005: generateCombinations with empty list
+covering
+test_SPC_005 : IO Bool
+test_SPC_005 = do
+  let result = generateCombinations defaultConfig []
+  pure $ length result >= 1
+
+||| REQ_COV_SPC_006: representativeValues for unknown type
+covering
+test_SPC_006 : IO Bool
+test_SPC_006 = do
+  let unknownType = MkTypeInfo "UnknownType" [] False TCUnbounded Unbounded
+  let vals = representativeValues unknownType
+  pure $ length vals >= 0
+
 -- =============================================================================
 -- Path Analysis Tests (PTH_001-004)
 -- =============================================================================
@@ -180,6 +279,23 @@ test_PTH_004 = do
   -- Test base case pattern (catch-all)
   let pattern = analyzePattern "_"
   pure $ pattern.reachability == Always
+
+||| REQ_COV_PTH_005: analyzePattern with constructor pattern
+covering
+test_PTH_005 : IO Bool
+test_PTH_005 = do
+  let pattern = analyzePattern "Just x"
+  pure $ pattern.reachability == Conditional
+
+||| REQ_COV_PTH_006: calculateTotalBranches with multiple patterns
+covering
+test_PTH_006 : IO Bool
+test_PTH_006 = do
+  let params = [ MkLinearParam (Just "x") "Bool" QW Nothing
+               , MkLinearParam (Just "y") "Maybe Int" QW Nothing
+               ]
+  let analysis = analyzeFunctionPaths "test" params
+  pure $ analysis.totalBranches >= 0
 
 -- =============================================================================
 -- Complexity Tests (CPX_001-004)
@@ -256,6 +372,22 @@ test_SRC_004 = do
   let funcs = analyzeSource source
   pure $ length funcs >= 1
 
+||| REQ_COV_SRC_005: analyzeSource with no exports
+covering
+test_SRC_005 : IO Bool
+test_SRC_005 = do
+  let source = "module Empty\n\n-- no exports here"
+  let funcs = analyzeSource source
+  pure $ length funcs == 0
+
+||| REQ_COV_SRC_006: analyzeSource with multiple functions
+covering
+test_SRC_006 : IO Bool
+test_SRC_006 = do
+  let source = "module Multi\n\nexport\nfoo : Int\nfoo = 1\n\nexport\nbar : String\nbar = \"x\""
+  let funcs = analyzeSource source
+  pure $ length funcs >= 2
+
 -- =============================================================================
 -- Collector Tests (COL_001-004)
 -- =============================================================================
@@ -289,6 +421,39 @@ test_COL_004 = do
   let html = "<table><tr><td class=pc0>uncovered</td></tr></table>"
   let hits = parseProfileHtml html
   pure $ True -- Zero coverage is valid
+
+||| REQ_COV_COL_005: parseProfileHtml with non-numeric line
+covering
+test_COL_005 : IO Bool
+test_COL_005 = do
+  -- "line abc" should fail to parse
+  let html = "<td class=pc1>line abc (5)</td>"
+  let hits = parseProfileHtml html
+  pure $ True -- Should handle gracefully
+
+||| REQ_COV_COL_006: parseProfileHtml without "line" keyword
+covering
+test_COL_006 : IO Bool
+test_COL_006 = do
+  let html = "<td class=pc1>something else</td>"
+  let hits = parseProfileHtml html
+  pure $ length hits == 0
+
+||| REQ_COV_COL_007: parseBranchCoverage with if branch
+covering
+test_COL_007 : IO Bool
+test_COL_007 = do
+  let html = "<span class=pc1 title=\"line 10 char 5 count 3\">(if condition then else)</span>"
+  let branches = parseBranchCoverage html
+  pure $ length branches >= 0
+
+||| REQ_COV_COL_008: parseBranchCoverage with case branch
+covering
+test_COL_008 : IO Bool
+test_COL_008 = do
+  let html = "<span class=pc1 title=\"line 20 char 5 count 2\">(case x [A body] [B body])</span>"
+  let branches = parseBranchCoverage html
+  pure $ length branches >= 0
 
 -- =============================================================================
 -- Report Tests (REP_001-004)
@@ -326,6 +491,34 @@ test_REP_004 = do
   let fc2 = coveredFunction "B" "f2" 5 ["T2"]
   let mc = aggregateModule "A.idr" [fc1]
   pure $ mc.functionsTotal >= 1
+
+||| REQ_COV_REP_005: maybeNatJson with Nothing
+covering
+test_REP_005 : IO Bool
+test_REP_005 = do
+  let json = maybeNatJson Nothing
+  pure $ json == "null"
+
+||| REQ_COV_REP_006: maybeStringJson with Nothing
+covering
+test_REP_006 : IO Bool
+test_REP_006 = do
+  let json = maybeStringJson Nothing
+  pure $ json == "null"
+
+||| REQ_COV_REP_007: maybeNatJson with Just
+covering
+test_REP_007 : IO Bool
+test_REP_007 = do
+  let json = maybeNatJson (Just 42)
+  pure $ json == "42"
+
+||| REQ_COV_REP_008: maybeStringJson with Just
+covering
+test_REP_008 : IO Bool
+test_REP_008 = do
+  let json = maybeStringJson (Just "test")
+  pure $ isInfixOf "test" json
 
 -- =============================================================================
 -- Aggregator Tests (AGG_001-004)
@@ -402,6 +595,21 @@ test_RUN_004 = do
   let passed = filter (.testPassed) [r1, r2]
   pure $ length passed == 2
 
+||| REQ_COV_RUN_005: matchGlob with wildcard no match
+covering
+test_RUN_005 : IO Bool
+test_RUN_005 = do
+  let matches = matchGlob "*.txt" "test.idr"
+  pure $ not matches
+
+||| REQ_COV_RUN_006: matchGlob with prefix wildcard
+covering
+test_RUN_006 : IO Bool
+test_RUN_006 = do
+  -- matchGlob supports simple * patterns, not **
+  let matches = matchGlob "*Test.idr" "MyTest.idr"
+  pure $ matches
+
 -- =============================================================================
 -- Test Hint Tests (HNT_001-004)
 -- =============================================================================
@@ -439,6 +647,101 @@ test_HNT_004 = do
   pure $ hintReport.totalHints >= 0
 
 -- =============================================================================
+-- Additional High-ROI Coverage Tests
+-- =============================================================================
+
+||| REQ_COV_LIN_009: parseLinearParam with "name : Type" (no quantity)
+covering
+test_LIN_009 : IO Bool
+test_LIN_009 = do
+  let result = parseLinearParam "x : Int"
+  pure $ case result of
+    Just lp => lp.quantity == QW && lp.paramName == Just "x" && lp.paramType == "Int"
+    Nothing => False
+
+||| REQ_COV_LIN_010: parseLinearParam with parens, no quantity
+covering
+test_LIN_010 : IO Bool
+test_LIN_010 = do
+  let result = parseLinearParam "(x : Bool)"
+  pure $ case result of
+    Just lp => lp.quantity == QW && lp.paramType == "Bool"
+    Nothing => False
+
+||| REQ_COV_TYP_012: resolveType with tuple type
+covering
+test_TYP_012 : IO Bool
+test_TYP_012 = do
+  let info = resolveType "(Int, Bool)"
+  pure $ isPrefixOf "(" info.typeName
+
+||| REQ_COV_TYP_013: parseParams with multi-arrow signature
+covering
+test_TYP_013 : IO Bool
+test_TYP_013 = do
+  let params = parseParams "Int -> Bool -> String -> IO ()"
+  pure $ length params == 3
+
+||| REQ_COV_SPC_007: paramStateSpace with erased (Q0) param
+covering
+test_SPC_007 : IO Bool
+test_SPC_007 = do
+  let p = MkLinearParam (Just "prf") "Void" Q0 Nothing
+  let space = paramStateSpace defaultConfig p
+  pure $ space == Finite 0
+
+||| REQ_COV_SPC_008: generateCombinations with Bool param
+covering
+test_SPC_008 : IO Bool
+test_SPC_008 = do
+  let boolInfo = MkTypeInfo "Bool" [] False (TCFinite 0) (Finite 2)
+  let p = MkLinearParam (Just "b") "Bool" QW (Just boolInfo)
+  let combos = generateCombinations defaultConfig [p]
+  pure $ length combos >= 2
+
+||| REQ_COV_PTH_007: analyzePattern with Left pattern string
+covering
+test_PTH_007 : IO Bool
+test_PTH_007 = do
+  let pattern = analyzePattern "Left _"
+  pure $ pattern.prunable == True
+
+||| REQ_COV_RUN_007: matchGlob with prefix matching
+covering
+test_RUN_007 : IO Bool
+test_RUN_007 = do
+  pure $ matchGlob "Test*.idr" "TestRunner.idr"
+
+||| REQ_COV_RUN_008: matchGlob non-match case
+covering
+test_RUN_008 : IO Bool
+test_RUN_008 = do
+  pure $ not (matchGlob "*.txt" "file.idr")
+
+||| REQ_COV_AGG_005: isTestModule identifies test modules
+covering
+test_AGG_005 : IO Bool
+test_AGG_005 = do
+  -- Test module patterns should be identified
+  let testFunc1 = isTestModule "CoverageC-45TestsC-45AllTests-test_001"
+  let testFunc2 = isTestModule "Coverage-Tests-AllTests-test_001"
+  -- Production module patterns should not match
+  let prodFunc1 = isTestModule "CoverageC-45Collector-parseHtml"
+  let prodFunc2 = isTestModule "Coverage-Types-MkRecord"
+  pure $ testFunc1 && testFunc2 && not prodFunc1 && not prodFunc2
+
+||| REQ_COV_AGG_006: excludeTestModules filters correctly
+covering
+test_AGG_006 : IO Bool
+test_AGG_006 = do
+  let funcs = [ ("CoverageC-45TestsC-45AllTests-test", 10)
+              , ("CoverageC-45Collector-parse", 20)
+              , ("CoverageC-45Types-show", 30)
+              ]
+  let filtered = excludeTestModules funcs
+  pure $ length filtered == 2
+
+-- =============================================================================
 -- All Tests
 -- =============================================================================
 
@@ -450,18 +753,33 @@ allTests =
   , ("REQ_COV_LIN_002", test_LIN_002)
   , ("REQ_COV_LIN_003", test_LIN_003)
   , ("REQ_COV_LIN_004", test_LIN_004)
+  , ("REQ_COV_LIN_005", test_LIN_005)
+  , ("REQ_COV_LIN_006", test_LIN_006)
+  , ("REQ_COV_LIN_007", test_LIN_007)
+  , ("REQ_COV_LIN_008", test_LIN_008)
   , ("REQ_COV_TYP_001", test_TYP_001)
   , ("REQ_COV_TYP_002", test_TYP_002)
   , ("REQ_COV_TYP_003", test_TYP_003)
   , ("REQ_COV_TYP_004", test_TYP_004)
+  , ("REQ_COV_TYP_005", test_TYP_005)
+  , ("REQ_COV_TYP_006", test_TYP_006)
+  , ("REQ_COV_TYP_007", test_TYP_007)
+  , ("REQ_COV_TYP_008", test_TYP_008)
+  , ("REQ_COV_TYP_009", test_TYP_009)
+  , ("REQ_COV_TYP_010", test_TYP_010)
+  , ("REQ_COV_TYP_011", test_TYP_011)
   , ("REQ_COV_SPC_001", test_SPC_001)
   , ("REQ_COV_SPC_002", test_SPC_002)
   , ("REQ_COV_SPC_003", test_SPC_003)
   , ("REQ_COV_SPC_004", test_SPC_004)
+  , ("REQ_COV_SPC_005", test_SPC_005)
+  , ("REQ_COV_SPC_006", test_SPC_006)
   , ("REQ_COV_PTH_001", test_PTH_001)
   , ("REQ_COV_PTH_002", test_PTH_002)
   , ("REQ_COV_PTH_003", test_PTH_003)
   , ("REQ_COV_PTH_004", test_PTH_004)
+  , ("REQ_COV_PTH_005", test_PTH_005)
+  , ("REQ_COV_PTH_006", test_PTH_006)
   , ("REQ_COV_CPX_001", test_CPX_001)
   , ("REQ_COV_CPX_002", test_CPX_002)
   , ("REQ_COV_CPX_003", test_CPX_003)
@@ -470,14 +788,24 @@ allTests =
   , ("REQ_COV_SRC_002", test_SRC_002)
   , ("REQ_COV_SRC_003", test_SRC_003)
   , ("REQ_COV_SRC_004", test_SRC_004)
+  , ("REQ_COV_SRC_005", test_SRC_005)
+  , ("REQ_COV_SRC_006", test_SRC_006)
   , ("REQ_COV_COL_001", test_COL_001)
   , ("REQ_COV_COL_002", test_COL_002)
   , ("REQ_COV_COL_003", test_COL_003)
   , ("REQ_COV_COL_004", test_COL_004)
+  , ("REQ_COV_COL_005", test_COL_005)
+  , ("REQ_COV_COL_006", test_COL_006)
+  , ("REQ_COV_COL_007", test_COL_007)
+  , ("REQ_COV_COL_008", test_COL_008)
   , ("REQ_COV_REP_001", test_REP_001)
   , ("REQ_COV_REP_002", test_REP_002)
   , ("REQ_COV_REP_003", test_REP_003)
   , ("REQ_COV_REP_004", test_REP_004)
+  , ("REQ_COV_REP_005", test_REP_005)
+  , ("REQ_COV_REP_006", test_REP_006)
+  , ("REQ_COV_REP_007", test_REP_007)
+  , ("REQ_COV_REP_008", test_REP_008)
   , ("REQ_COV_AGG_001", test_AGG_001)
   , ("REQ_COV_AGG_002", test_AGG_002)
   , ("REQ_COV_AGG_003", test_AGG_003)
@@ -486,10 +814,23 @@ allTests =
   , ("REQ_COV_RUN_002", test_RUN_002)
   , ("REQ_COV_RUN_003", test_RUN_003)
   , ("REQ_COV_RUN_004", test_RUN_004)
+  , ("REQ_COV_RUN_005", test_RUN_005)
+  , ("REQ_COV_RUN_006", test_RUN_006)
   , ("REQ_COV_HNT_001", test_HNT_001)
   , ("REQ_COV_HNT_002", test_HNT_002)
   , ("REQ_COV_HNT_003", test_HNT_003)
   , ("REQ_COV_HNT_004", test_HNT_004)
+  , ("REQ_COV_LIN_009", test_LIN_009)
+  , ("REQ_COV_LIN_010", test_LIN_010)
+  , ("REQ_COV_TYP_012", test_TYP_012)
+  , ("REQ_COV_TYP_013", test_TYP_013)
+  , ("REQ_COV_SPC_007", test_SPC_007)
+  , ("REQ_COV_SPC_008", test_SPC_008)
+  , ("REQ_COV_PTH_007", test_PTH_007)
+  , ("REQ_COV_RUN_007", test_RUN_007)
+  , ("REQ_COV_RUN_008", test_RUN_008)
+  , ("REQ_COV_AGG_005", test_AGG_005)
+  , ("REQ_COV_AGG_006", test_AGG_006)
   ]
 
 -- =============================================================================

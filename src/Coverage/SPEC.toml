@@ -151,7 +151,8 @@ specs = [
   "- [REQ_COV_AGG_001] ${module_self}/Aggregator SHALL map each function to list of tests that called it",
   "- [REQ_COV_AGG_002] ${module_self}/Aggregator SHALL compute coverage_percent per function",
   "- [REQ_COV_AGG_003] ${module_self}/Aggregator SHALL detect dead code (exported but not in .ss)",
-  "- [REQ_COV_AGG_004] ${module_self}/Aggregator SHALL aggregate to module and project level"
+  "- [REQ_COV_AGG_004] ${module_self}/Aggregator SHALL aggregate to module and project level",
+  "- [REQ_COV_AGG_005] ${module_self}/Collector SHALL exclude test modules from coverage calculation"
 ]
 
 # =============================================================================
@@ -246,6 +247,10 @@ description = "${module_self}/TestRunner SHALL associate profile results with te
 [[spec]]
 id = "REQ_COV_AGG_004"
 description = "${module_self}/Aggregator SHALL aggregate to module and project level"
+
+[[spec]]
+id = "REQ_COV_AGG_005"
+description = "${module_self}/Collector SHALL exclude test modules from coverage calculation"
 
 [[spec]]
 id = "REQ_COV_REP_003"
@@ -768,3 +773,4 @@ text = "There exists a record `ModuleComplexityReport` containing moduleName, fu
 [[type]]
 id = "REQ_TYPE_CPX_009"
 text = "There exists a record `ComplexityWarning` containing funcName, warningType, message, and severity fields"
+

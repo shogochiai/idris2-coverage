@@ -29,11 +29,13 @@ escapeJson s = fastConcat $ map escapeChar (unpack s)
 -- =============================================================================
 
 ||| Generate JSON for Maybe String
+export
 maybeStringJson : Maybe String -> String
 maybeStringJson Nothing = "null"
 maybeStringJson (Just s) = "\"\{escapeJson s}\""
 
 ||| Generate JSON for Maybe Nat
+export
 maybeNatJson : Maybe Nat -> String
 maybeNatJson Nothing = "null"
 maybeNatJson (Just n) = show n

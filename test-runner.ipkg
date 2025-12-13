@@ -1,0 +1,24 @@
+package test-runner
+version = 0.1.0
+
+sourcedir = "src"
+main = Coverage.Tests.AllTests
+opts = "--profile"
+
+depends = base, contrib
+
+modules = Coverage.Types
+        , Coverage.Collector
+        , Coverage.SourceAnalyzer
+        , Coverage.TestRunner
+        , Coverage.Aggregator
+        , Coverage.Report
+        , Coverage.Linearity
+        , Coverage.TypeAnalyzer
+        , Coverage.StateSpace
+        , Coverage.PathAnalysis
+        , Coverage.Complexity
+        , Coverage.TestHint
+        , Coverage.Tests.AllTests
+
+executable = test-runner
