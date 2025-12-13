@@ -404,6 +404,31 @@ associateBranchesWithFunctions funcDefs bps =
            [] => ("unknown", bp)
            ((name, _) :: _) => (name, bp)
 
+||| REQ_COV_AGG_005: Check if a Scheme function name belongs to a test module
+||| Test modules follow pattern: *C-45TestsC-45* (corresponds to *.Tests.* in Idris)
+export
+isTestModule : String -> Bool
+isTestModule funcName = isInfixOf "C-45Tests" funcName || isInfixOf "-Tests-" funcName
+
+||| Filter out test module functions from function definitions
+export
+excludeTestModules : List (String, Nat) -> List (String, Nat)
+excludeTestModules = filter (\(name, _) => not (isTestModule name))
+
+||| Filter out branch points that belong to test modules
+excludeTestBranchPoints : List (String, Nat) -> List BranchPoint -> List BranchPoint
+excludeTestBranchPoints funcDefs bps =
+  filter (isProductionBranch funcDefs) bps
+  where
+    -- Check if branch point belongs to a production function (not test)
+    isProductionBranch : List (String, Nat) -> BranchPoint -> Bool
+    isProductionBranch allFuncs bp =
+      let candidates = filter (\(_, l) => l <= bp.line) allFuncs
+          sorted = sortBy (\(_, l1), (_, l2) => compare l2 l1) candidates
+      in case sorted of
+           [] => True  -- Include if can't determine (e.g., Prelude functions)
+           ((name, _) :: _) => not (isTestModule name)
+
 ||| Calculate branch coverage summary with function associations
 export
 summarizeBranchCoverageWithFunctions : List (String, Nat) -> List BranchPoint -> BranchCoverageSummary
@@ -416,6 +441,14 @@ summarizeBranchCoverageWithFunctions funcDefs bps =
       uncovered = filter (\bp => bp.coveredBranches < bp.totalBranches) bps
       associated = associateBranchesWithFunctions funcDefs uncovered
   in MkBranchCoverageSummary totalPoints totalBranches coveredBranches pct associated
+
+||| REQ_COV_AGG_005: Calculate branch coverage excluding test modules
+export
+summarizeBranchCoverageExcludingTests : List (String, Nat) -> List BranchPoint -> BranchCoverageSummary
+summarizeBranchCoverageExcludingTests funcDefs bps =
+  let prodFuncs = excludeTestModules funcDefs
+      prodBps = excludeTestBranchPoints funcDefs bps
+  in summarizeBranchCoverageWithFunctions prodFuncs prodBps
 
 -- =============================================================================
 -- File Reading (partial - involves IO)
