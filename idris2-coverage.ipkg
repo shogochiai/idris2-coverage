@@ -1,7 +1,7 @@
 package idris2-coverage
 version = 0.3.0
 authors = "lazy-idris team"
-brief = "Code coverage tool for Idris2 with type-driven state space analysis and test hint generation"
+brief = "Code coverage tool for Idris2 with type-driven analysis"
 
 sourcedir = "src"
 main = Main
@@ -21,5 +21,7 @@ modules = Main
         , Coverage.PathAnalysis
         , Coverage.Complexity
         , Coverage.TestHint
+        , Coverage.UnifiedRunner
+        , Coverage.Tests.AllTests
 
 executable = idris2-cov
