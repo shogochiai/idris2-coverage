@@ -774,3 +774,43 @@ text = "There exists a record `ModuleComplexityReport` containing moduleName, fu
 id = "REQ_TYPE_CPX_009"
 text = "There exists a record `ComplexityWarning` containing funcName, warningType, message, and severity fields"
 
+# =============================================================================
+# Unified Runner Specifications (v0.4.0)
+# =============================================================================
+
+[[spec_area]]
+name = "Unified Test Runner"
+description = "High-level API for running tests with coverage collection"
+
+[[spec_area.sub_feature]]
+name = "Test Execution with Coverage"
+specs = [
+  "- [REQ_COV_UNI_001] ${module_self}/UnifiedRunner SHALL run tests with profiling and return combined TestCoverageReport",
+  "- [REQ_COV_UNI_002] ${module_self}/UnifiedRunner SHALL clean up all temporary files (.ss.html, profile.html, temp sources)",
+  "- [REQ_COV_UNI_003] ${module_self}/UnifiedRunner SHALL exclude test modules from branch coverage calculation"
+]
+
+[[spec]]
+id = "REQ_COV_UNI_001"
+description = "${module_self}/UnifiedRunner SHALL run tests with profiling and return combined TestCoverageReport"
+
+[[spec]]
+id = "REQ_COV_UNI_002"
+description = "${module_self}/UnifiedRunner SHALL clean up all temporary files (.ss.html, profile.html, temp sources)"
+
+[[spec]]
+id = "REQ_COV_UNI_003"
+description = "${module_self}/UnifiedRunner SHALL exclude test modules from branch coverage calculation"
+
+[[type]]
+id = "REQ_TYPE_UNI_001"
+text = "There exists a record `TestResult` containing testName, passed, and message fields"
+
+[[type]]
+id = "REQ_TYPE_UNI_002"
+text = "There exists a record `TestCoverageReport` containing testResults, totalTests, passedTests, failedTests, branchCoverage, and timestamp fields"
+
+[[type]]
+id = "REQ_TYPE_UNI_003"
+text = "There exists a function `runTestsWithCoverage` that executes tests and returns coverage data"
+

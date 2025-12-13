@@ -19,6 +19,7 @@ modules = Coverage.Types
         , Coverage.PathAnalysis
         , Coverage.Complexity
         , Coverage.TestHint
+        , Coverage.UnifiedRunner
         , Coverage.Tests.AllTests
 
 executable = test-runner

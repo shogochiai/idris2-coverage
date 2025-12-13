@@ -504,3 +504,39 @@ record StateSpaceReport where
   totalActual        : Nat
   stateSpaceCoverage : Double
   complexityWarnings : List (String, ComplexityMetrics)   -- Functions that should be split
+
+-- =============================================================================
+-- Test Result Types (Unified Runner)
+-- =============================================================================
+
+||| Individual test execution result
+public export
+record TestResult where
+  constructor MkTestResult
+  testName : String
+  passed   : Bool
+  message  : Maybe String
+
+public export
+Show TestResult where
+  show r = "[" ++ (if r.passed then "PASS" else "FAIL") ++ "] " ++ r.testName
+
+public export
+Eq TestResult where
+  r1 == r2 = r1.testName == r2.testName && r1.passed == r2.passed
+
+||| Combined test and coverage report
+public export
+record TestCoverageReport where
+  constructor MkTestCoverageReport
+  testResults     : List TestResult
+  totalTests      : Nat
+  passedTests     : Nat
+  failedTests     : Nat
+  branchCoverage  : BranchCoverageSummary
+  timestamp       : String
+
+public export
+Show TestCoverageReport where
+  show r = "Tests: " ++ show r.passedTests ++ "/" ++ show r.totalTests
+        ++ ", Branch: " ++ show r.branchCoverage.branchPercent ++ "%"
