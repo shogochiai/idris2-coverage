@@ -1,32 +1,47 @@
 # idris2-coverage
 
-**Analysis library** for Idris2 code coverage. Parses Chez Scheme profiler output to extract expression coverage, branch coverage, and generate actionable test hints.
+**Code coverage library** for Idris2. Parses Chez Scheme profiler output to extract expression coverage, branch coverage, and generate actionable test hints.
 
-> **Important**: This is an **analysis-only** library. It does NOT run tests or generate profile data. The caller (e.g., lazy-idris) must handle test execution with profiling enabled.
+Provides two integration modes:
+- **Analysis-only**: Parse existing `.ss.html` files (low-level API)
+- **Unified Runner**: Run tests with profiling and get coverage in one call (high-level API)
 
-## What This Library Does
+## Quick Start: Unified Runner (Recommended)
+
+```idris
+import Coverage.UnifiedRunner
+import Coverage.Types
+
+main : IO ()
+main = do
+  result <- runTestsWithCoverage "." ["My.Tests.AllTests"] 120
+  case result of
+    Left err => putStrLn $ "Error: " ++ err
+    Right report => do
+      putStrLn $ "Tests: " ++ show report.passedTests ++ "/" ++ show report.totalTests
+      putStrLn $ "Branch coverage: " ++ show report.branchCoverage.branchPercent ++ "%"
+```
+
+The Unified Runner handles all Scheme/.ss.html complexity internally:
+1. Generates temp test runner with `--profile`
+2. Builds and executes
+3. Parses coverage from `.ss.html`
+4. Cleans up temp files
+5. Returns `TestCoverageReport`
+
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    YOUR TEST RUNNER                          │
-│  (lazy-idris, custom script, CI pipeline, etc.)             │
-├─────────────────────────────────────────────────────────────┤
-│  1. Compile with --profile    → idris2 --build --profile    │
-│  2. Execute tests             → ./build/exec/mytest         │
-│  3. Chez Scheme generates     → mytest.ss.html              │
+│  Option A: Unified Runner (HIGH-LEVEL)                      │
+│  runTestsWithCoverage "." ["Tests.AllTests"] 120            │
+│    → TestCoverageReport (tests + branch coverage)           │
 └─────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
+
 ┌─────────────────────────────────────────────────────────────┐
-│                    idris2-coverage                           │
-│  (THIS LIBRARY)                                              │
-├─────────────────────────────────────────────────────────────┤
-│  Input:  .ss.html file (annotated Scheme source)            │
-│  Output:                                                     │
-│    • Expression coverage (73.7%)                            │
-│    • Branch coverage (33.6%)                                │
-│    • Actionable test hints                                  │
-│    • JSON/Text reports                                       │
+│  Option B: Analysis Only (LOW-LEVEL)                        │
+│  YOUR TEST RUNNER generates .ss.html                        │
+│    → idris2-coverage parses and analyzes                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -115,6 +130,42 @@ analyzeCoverage ssHtmlPath ssPath = do
 
 ## API Reference
 
+### Unified Runner (High-Level)
+
+```idris
+-- From Coverage.UnifiedRunner
+
+-- Run tests with profiling and return combined report
+runTestsWithCoverage : (projectDir : String)
+                     -> (testModules : List String)
+                     -> (timeout : Nat)
+                     -> IO (Either String TestCoverageReport)
+
+-- Test modules must export: runAllTests : IO ()
+-- Output format: [PASS] TestName or [FAIL] TestName: message
+```
+
+```idris
+-- From Coverage.Types
+
+-- Individual test result
+record TestResult where
+  constructor MkTestResult
+  testName : String
+  passed   : Bool
+  message  : Maybe String
+
+-- Combined test and coverage report
+record TestCoverageReport where
+  constructor MkTestCoverageReport
+  testResults     : List TestResult
+  totalTests      : Nat
+  passedTests     : Nat
+  failedTests     : Nat
+  branchCoverage  : BranchCoverageSummary
+  timestamp       : String
+```
+
 ### Core Types
 
 ```idris
@@ -194,6 +245,88 @@ aggregateProjectWithBranches : List ModuleCoverage -> BranchCoverageSummary -> P
 ```
 
 ## Output Formats
+
+### Coverage Granularity
+
+idris2-coverage outputs coverage at three levels for actionable insights:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Project Level (aggregate)                                  │
+│    total_functions: 42, covered_functions: 35 (83.3%)       │
+├─────────────────────────────────────────────────────────────┤
+│  Module Level (per-file breakdown)                          │
+│    src/Foo.idr: 10/12 functions (85.0%)                     │
+│    src/Bar.idr: 25/30 functions (80.0%)                     │
+├─────────────────────────────────────────────────────────────┤
+│  Function Level (most granular)                             │
+│    Foo.process: 100% ← called by [test_process]             │
+│    Foo.validate: 0%  ← NOT TESTED                           │
+│    Bar.transform: 75% ← called by [test_transform]          │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Full Coverage Report (JSON)
+
+```json
+{
+  "functions": [
+    {
+      "module": "Sample",
+      "name": "add",
+      "signature": "Int -> Int -> Int",
+      "line_start": 5,
+      "line_end": 6,
+      "covered_lines": 2,
+      "total_lines": 2,
+      "coverage_percent": 100.0,
+      "called_by_tests": ["test_add"]
+    },
+    {
+      "module": "Sample",
+      "name": "unused",
+      "signature": "Int -> Int",
+      "line_start": 18,
+      "line_end": 19,
+      "covered_lines": 0,
+      "total_lines": 2,
+      "coverage_percent": 0.0,
+      "called_by_tests": []
+    }
+  ],
+  "modules": [
+    {
+      "path": "src/Sample.idr",
+      "functions_total": 4,
+      "functions_covered": 3,
+      "line_coverage_percent": 75.0
+    }
+  ],
+  "project": {
+    "total_functions": 4,
+    "covered_functions": 3,
+    "line_coverage_percent": 75.0,
+    "branch_coverage_percent": 33.6
+  }
+}
+```
+
+### Coverage Report (Text)
+
+```
+=== Coverage Report ===
+
+Project Summary:
+  Functions: 3/4 covered
+  Line Coverage: 75.0%
+  Branch Coverage: 33.6%
+
+Modules:
+  src/Sample.idr: 3/4 (75.0%)
+
+Uncovered Functions:
+  Sample.unused (line 18)
+```
 
 ### Branch Coverage Summary (JSON)
 
@@ -298,7 +431,8 @@ when (shouldRunStep StepCodeCoverage opts.steps) $ do
 src/
 ├── Main.idr                 # CLI entry point
 └── Coverage/
-    ├── Types.idr            # Core data types
+    ├── Types.idr            # Core data types (TestResult, TestCoverageReport, etc.)
+    ├── UnifiedRunner.idr    # High-level API: runTestsWithCoverage
     ├── Collector.idr        # .ss.html parsing, branch detection
     ├── Aggregator.idr       # Coverage aggregation
     ├── Report.idr           # JSON/Text output generation
@@ -309,18 +443,20 @@ src/
     ├── TypeAnalyzer.idr     # Type signature parsing
     ├── StateSpace.idr       # State space calculation
     ├── PathAnalysis.idr     # Path reachability analysis
-    └── Complexity.idr       # Complexity metrics
+    ├── Complexity.idr       # Complexity metrics
+    └── Tests/
+        └── AllTests.idr     # 87 unit tests
 ```
 
 ## Limitations
 
-1. **No Test Execution**: This library does not run tests. The caller must execute tests with Chez Scheme profiling enabled.
+1. **Chez Scheme Only**: Currently only supports Chez Scheme backend profiler output.
 
-2. **Chez Scheme Only**: Currently only supports Chez Scheme backend profiler output.
+2. **Heuristic Branch Detection**: Branch coverage uses pattern matching on Scheme constructs, which may miss some edge cases.
 
-3. **Heuristic Branch Detection**: Branch coverage uses pattern matching on Scheme constructs, which may miss some edge cases.
+3. **No Source Mapping**: Function names are Scheme-mangled (e.g., `PreludeC-45Types-...`). Full Idris source mapping requires additional integration.
 
-4. **No Source Mapping**: Function names are Scheme-mangled (e.g., `PreludeC-45Types-...`). Full Idris source mapping requires additional integration.
+4. **Unified Runner Requirements**: Test modules must export `runAllTests : IO ()` and output `[PASS]/[FAIL]` format.
 
 ## Running Tests
 
