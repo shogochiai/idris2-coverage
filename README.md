@@ -80,6 +80,28 @@ Parser extracts:
 - 1 impossible case (`CRASH "Impossible case"`)
 - **Denominator = 1** (impossible excluded)
 
+### Runtime Hits via .ss.html Profiler
+
+When running tests with `idris2 --profile`, the Chez Scheme backend generates `.ss.html` files with expression-level execution counts. The library parses these to determine which canonical cases were actually executed at runtime.
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  Static Analysis (--dumpcases)    │  Runtime Analysis (.ss.html)    │
+├───────────────────────────────────┼─────────────────────────────────┤
+│  %concase → Canonical             │  Expression hit count > 0       │
+│  CRASH "Impossible" → Absurd      │  (never executed - excluded)    │
+│  CRASH "not covered" → Bug        │  Expression hit count = 0 (gap) │
+└───────────────────────────────────┴─────────────────────────────────┘
+```
+
+**Absurd Case Detection**:
+1. **Static**: `CRASH "Impossible case encountered"` in `--dumpcases` → type system proves unreachability
+2. **Runtime**: These expressions have hit count 0 in `.ss.html`, but this is *expected* — they are excluded from coverage calculation
+
+This separation ensures that:
+- Type-proven unreachable code (absurd patterns) doesn't inflate coverage requirements
+- Genuinely untested code (`CRASH "case not covered"`) is flagged as a gap
+
 ## API Reference
 
 ### SemanticCoverage (High-Level)
