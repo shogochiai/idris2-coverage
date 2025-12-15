@@ -2,7 +2,11 @@
 
 **Semantic coverage library** for Idris2. Uses `--dumpcases` output to measure canonical case coverage with type-awareness.
 
-Based on the STI Parity framework: [arXiv:2501.18087](https://arxiv.org/abs/2501.18087)
+## Theoretical Foundation
+
+This library's classification of **impossible cases** (type-excluded patterns) aligns with the concept of **absurd patterns** in dependent type theory. See [Ermondi-Kammar: Coverage Semantics for Dependent Pattern Matching (arXiv:2501.18087)](https://arxiv.org/abs/2501.18087) for the categorical semantics foundation.
+
+**Key insight**: Idris2's `CRASH "Impossible case encountered"` in `--dumpcases` output corresponds to absurd patterns — cases that are statically unreachable due to type constraints. These are excluded from the coverage denominator because they can never execute.
 
 ## Quick Start
 
