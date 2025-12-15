@@ -5,17 +5,13 @@
 ## Quick Start
 
 ```idris
-import Coverage.DumpcasesParser
-import Coverage.Types
+import Coverage.SemanticCoverage
 
 main : IO ()
 main = do
-  -- Run idris2 --dumpcases to get case analysis
-  Right content <- readFile "/tmp/dumpcases_output.txt"
-    | Left _ => putStrLn "Error reading dumpcases"
-
-  let funcs = parseDumpcasesFile content
-  let analysis = aggregateAnalysis funcs
+  -- Analyze project - runs idris2 --dumpcases internally
+  Right analysis <- analyzeProject "myproject.ipkg"
+    | Left err => putStrLn $ "Error: " ++ err
 
   putStrLn $ "Canonical cases: " ++ show analysis.totalCanonical
   putStrLn $ "Impossible (excluded): " ++ show analysis.totalImpossible
@@ -86,20 +82,24 @@ Parser extracts:
 
 ## API Reference
 
-### DumpcasesParser
+### SemanticCoverage (High-Level)
 
 ```idris
--- Parse --dumpcases output
-parseDumpcasesFile : String -> List CompiledFunction
+-- Analyze project - runs idris2 --dumpcases internally
+analyzeProject : String -> IO (Either String SemanticAnalysis)
 
--- Analyze a single function
-analyzeFunction : String -> Maybe CompiledFunction
+-- Analyze with runtime profiler hits
+analyzeProjectWithHits : String -> List String -> IO (Either String SemanticCoverage)
+```
+
+### DumpcasesParser (Low-Level)
+
+```idris
+-- Parse --dumpcases output (after running idris2 --dumpcases yourself)
+parseDumpcasesFile : String -> List CompiledFunction
 
 -- Aggregate analysis
 aggregateAnalysis : List CompiledFunction -> SemanticAnalysis
-
--- Convert to SemanticCoverage
-toSemanticCoverage : CompiledFunction -> SemanticCoverage
 
 -- Runtime hit mapping
 matchFunctionHits : List CompiledFunction -> List (Nat, Nat, Nat) -> List FunctionHitMapping
@@ -285,15 +285,16 @@ idris2 --build idris2-coverage.ipkg
 
 ```
 src/
-├── Main.idr                 # CLI entry point
+├── Main.idr                    # CLI entry point
 └── Coverage/
-    ├── Types.idr            # Core types (CaseKind, SemanticCoverage, etc.)
-    ├── DumpcasesParser.idr  # --dumpcases parser
-    ├── Aggregator.idr       # Coverage aggregation
-    ├── Report.idr           # JSON/Text output
-    ├── TestRunner.idr       # Test execution utilities
+    ├── Types.idr               # Core types (CaseKind, SemanticCoverage, etc.)
+    ├── SemanticCoverage.idr    # High-level API (runs --dumpcases internally)
+    ├── DumpcasesParser.idr     # Low-level --dumpcases output parser
+    ├── Aggregator.idr          # Coverage aggregation
+    ├── Report.idr              # JSON/Text output
+    ├── TestRunner.idr          # Test execution utilities
     └── Tests/
-        └── AllTests.idr     # Unit tests
+        └── AllTests.idr        # Unit tests
 ```
 
 ## License
