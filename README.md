@@ -2,6 +2,22 @@
 
 **Semantic coverage library** for Idris2. Uses `--dumpcases` output to measure canonical case coverage with type-awareness.
 
+## Status / Scope
+
+This project is an experimental exploration of *semantic coverage* for Idris2.
+
+It currently uses `--dumpcases` output as a **pragmatic observation point**
+to distinguish:
+- type-proven unreachable cases (absurd patterns), and
+- genuine coverage gaps.
+
+**Important:**  
+Using `--dumpcases` is a working assumption, not a claim that it is the
+ideal or intended interface for semantic coverage.
+Part of the motivation of this project is to understand *where* such
+semantic distinctions should properly live in the Idris2 pipeline.
+
+
 ## Theoretical Foundation
 
 This library's classification of **impossible cases** (type-excluded patterns) aligns with the concept of **absurd patterns** in dependent type theory. See [Ermondi-Kammar: Coverage Semantics for Dependent Pattern Matching (arXiv:2501.18087)](https://arxiv.org/abs/2501.18087) for the categorical semantics foundation.
