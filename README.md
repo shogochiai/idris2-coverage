@@ -1,13 +1,8 @@
 # idris2-coverage
 
-**Code coverage library** for Idris2. Provides two coverage modes:
-
-1. **Legacy Mode**: Expression/branch coverage from Chez Scheme profiler (`.ss.html`)
-2. **Semantic Mode** (Phase 7): Canonical case coverage from `--dumpcases` output
+**Semantic coverage library** for Idris2. Uses `--dumpcases` output to measure canonical case coverage with type-awareness.
 
 ## Quick Start
-
-### Semantic Coverage (Recommended)
 
 ```idris
 import Coverage.DumpcasesParser
@@ -27,27 +22,11 @@ main = do
   putStrLn $ "Not-covered (bugs): " ++ show analysis.totalNotCovered
 ```
 
-### Legacy Coverage (Branch/Expression)
-
-```idris
-import Coverage.UnifiedRunner
-import Coverage.Types
-
-main : IO ()
-main = do
-  result <- runTestsWithCoverage "." ["My.Tests.AllTests"] 120
-  case result of
-    Left err => putStrLn $ "Error: " ++ err
-    Right report => do
-      putStrLn $ "Tests: " ++ show report.passedTests ++ "/" ++ show report.totalTests
-      putStrLn $ "Branch coverage: " ++ show report.branchCoverage.branchPercent ++ "%"
-```
-
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     SEMANTIC COVERAGE (Phase 7)                      │
+│                     SEMANTIC COVERAGE                                │
 │  idris2 --dumpcases myproject.ipkg                                  │
 │    → CaseTree output → DumpcasesParser                              │
 │    → Canonical vs Impossible vs NotCovered classification           │
@@ -56,21 +35,13 @@ main = do
                                   ↓
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        LAZY INTEGRATION                              │
-│  Lazy STI Parity → runSemanticCoveragePass                          │
+│  Lazy STI Parity → runCoveragePass                                  │
 │    → Gaps for uncovered canonical cases                             │
 │    → Signal.Adaptor for real-time coverage data                     │
 └─────────────────────────────────────────────────────────────────────┘
-                                  ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                     LEGACY COVERAGE (Optional)                       │
-│  runTestsWithCoverage → .ss.html parsing                            │
-│    → Expression/Branch coverage from Chez profiler                  │
-└─────────────────────────────────────────────────────────────────────┘
 ```
 
-## Semantic Coverage (Phase 7)
-
-### What is Semantic Coverage?
+## What is Semantic Coverage?
 
 Unlike traditional line/branch coverage, **Semantic Coverage** measures:
 
@@ -113,7 +84,9 @@ Parser extracts:
 - 1 impossible case (`CRASH "Impossible case"`)
 - **Denominator = 1** (impossible excluded)
 
-### API Reference: DumpcasesParser
+## API Reference
+
+### DumpcasesParser
 
 ```idris
 -- Parse --dumpcases output
@@ -128,7 +101,7 @@ aggregateAnalysis : List CompiledFunction -> SemanticAnalysis
 -- Convert to SemanticCoverage
 toSemanticCoverage : CompiledFunction -> SemanticCoverage
 
--- Runtime hit mapping (Phase 7.6)
+-- Runtime hit mapping
 matchFunctionHits : List CompiledFunction -> List (Nat, Nat, Nat) -> List FunctionHitMapping
 semanticCoverageWithHits : List CompiledFunction -> List (Nat, Nat, Nat) -> SemanticCoverage
 ```
@@ -171,14 +144,14 @@ record SemanticAnalysis where
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                           LAZY CLI                                   │
-│  lazy core ask --coverage-mode semantic                             │
+│  lazy core ask                                                       │
 └─────────────────────────────────────────────────────────────────────┘
                                   │
                                   ↓
 ┌─────────────────────────────────────────────────────────────────────┐
 │  LazyCore/src/Ask/TestAndCoverage.idr                               │
 │                                                                      │
-│  runSemanticCoveragePass : AskOptions -> IO (List Gap, StepStatus)  │
+│  runCoveragePass : AskOptions -> IO (List Gap, StepStatus)          │
 │    1. idris2 --dumpcases → parseDumpcasesFile                       │
 │    2. runTestsWithCoverage → runtime hits                           │
 │    3. semanticCoverageWithHits → coverage %                         │
@@ -205,11 +178,8 @@ import Coverage.Types
 import Coverage.TestRunner
 
 -- In STI Parity Step 4 (Test & Coverage)
+-- Semantic coverage is the only mode
 runCoveragePass : AskOptions -> IO (List Gap, StepStatus)
-runCoveragePass opts =
-  case opts.coverageMode of
-    Legacy   => runBranchCoveragePass opts    -- .ss.html based
-    Semantic => runSemanticCoveragePass opts  -- --dumpcases based
 ```
 
 ### Gap Generation
@@ -299,65 +269,9 @@ Per-function:
   Validator.check: 0/3 (0%) [impossible: 2]
 ```
 
-### Legacy Branch Coverage JSON
-
-```json
-{
-  "total_branch_points": 217,
-  "total_branches": 446,
-  "covered_branches": 150,
-  "branch_percent": 33.63
-}
-```
-
-## Legacy Coverage Mode
-
-The original coverage mode using Chez Scheme profiler output.
-
-### Features
-
-- **Expression Coverage**: Per-expression execution counts
-- **Branch Coverage**: Analyzes `if`/`case`/`cond` constructs
-- **Test Hints**: Actionable suggestions for improving coverage
-- **Function Mapping**: Associates Scheme code to Idris functions
-
-### Unified Runner API
-
-```idris
--- Run tests with profiling and return combined report
-runTestsWithCoverage : (projectDir : String)
-                     -> (testModules : List String)
-                     -> (timeout : Nat)
-                     -> IO (Either String TestCoverageReport)
-
--- Test modules must export: runAllTests : IO ()
--- Output format: [PASS] TestName or [FAIL] TestName: message
-```
-
-### Manual Analysis
-
-```idris
-import Coverage.Collector
-import Coverage.TestHint
-
-analyzeCoverage : String -> String -> IO ()
-analyzeCoverage ssHtmlPath ssPath = do
-  Right html <- readFile ssHtmlPath | Left _ => putStrLn "Error"
-  Right ss <- readFile ssPath | Left _ => putStrLn "Error"
-
-  let funcDefs = parseSchemeDefs ss
-  let branchPoints = parseBranchCoverage html
-  let summary = summarizeBranchCoverageWithFunctions funcDefs branchPoints
-  let hints = generateBranchHints summary
-
-  putStrLn $ "Branch Coverage: " ++ show summary.branchPercent ++ "%"
-  putStrLn $ branchHintsToText (summarizeBranchHints hints)
-```
-
 ## Requirements
 
 - Idris2 0.8.0+
-- Chez Scheme 10.0+ (for legacy mode profiler output)
 
 ## Installation
 
@@ -374,33 +288,13 @@ src/
 ├── Main.idr                 # CLI entry point
 └── Coverage/
     ├── Types.idr            # Core types (CaseKind, SemanticCoverage, etc.)
-    ├── DumpcasesParser.idr  # NEW: --dumpcases parser (Phase 7)
-    ├── UnifiedRunner.idr    # High-level API: runTestsWithCoverage
-    ├── Collector.idr        # .ss.html parsing, branch detection
+    ├── DumpcasesParser.idr  # --dumpcases parser
     ├── Aggregator.idr       # Coverage aggregation
-    ├── Report.idr           # JSON/Text output (+ semantic reports)
-    ├── TestHint.idr         # Hint generation for uncovered code
+    ├── Report.idr           # JSON/Text output
     ├── TestRunner.idr       # Test execution utilities
     └── Tests/
         └── AllTests.idr     # Unit tests
 ```
-
-## Comparison: Semantic vs Legacy
-
-| Aspect | Semantic (Phase 7) | Legacy |
-|--------|-------------------|--------|
-| Source | `--dumpcases` | `.ss.html` profiler |
-| Granularity | Case patterns | Expressions/branches |
-| Type-awareness | Yes (impossible excluded) | No |
-| Runtime needed | Optional (for executed count) | Required |
-| Idris-native | Yes | Scheme-based |
-
-## Limitations
-
-1. **Semantic Mode**: Requires `--dumpcases` flag support in Idris2
-2. **Legacy Mode**: Chez Scheme backend only
-3. **Name Mapping**: Legacy mode uses Scheme-mangled names
-4. **Unified Runner**: Test modules must export `runAllTests : IO ()`
 
 ## License
 
