@@ -10,6 +10,7 @@ import System.Clock
 import System.File
 import System.Directory
 import Data.List
+import Data.List1
 import Data.String
 
 %default covering
@@ -39,20 +40,25 @@ generateTempRunner modName testModules = unlines
   , unlines (map (\m => "import " ++ m) testModules)
   , ""
   , "main : IO ()"
-  , "main = runAllTests"
+  , "main = do"
+  , unlines (map (\m => "  " ++ m ++ ".runAllTests") testModules)
   ]
 
 ||| Generate temporary .ipkg file
-generateTempIpkg : String -> String -> List String -> String -> String
-generateTempIpkg pkgName mainMod modules execName = unlines
-  [ "package " ++ pkgName
-  , "opts = \"--profile\""
-  , "sourcedir = \"src\""
-  , "main = " ++ mainMod
-  , "executable = " ++ execName
-  , "depends = base, contrib"
-  , "modules = " ++ joinStrings ", " modules
-  ]
+||| @depends - Additional package dependencies (e.g., from target project's ipkg)
+generateTempIpkg : String -> String -> List String -> String -> List String -> String
+generateTempIpkg pkgName mainMod modules execName depends =
+  let allDepends = "base, contrib, idris2-coverage" ++
+        (if null depends then "" else ", " ++ joinStrings ", " depends)
+  in unlines
+    [ "package " ++ pkgName
+    , "opts = \"--profile\""
+    , "sourcedir = \"src\""
+    , "main = " ++ mainMod
+    , "executable = " ++ execName
+    , "depends = " ++ allDepends
+    , "modules = " ++ joinStrings ", " modules
+    ]
 
 -- =============================================================================
 -- Test Output Parsing
@@ -101,6 +107,42 @@ cleanupTempFiles tempIdr tempIpkg ssHtml profileHtml = do
   removeFileIfExists profileHtml
 
 -- =============================================================================
+-- Ipkg Parsing
+-- =============================================================================
+
+||| Parse depends line from ipkg content
+||| Returns list of package names from "depends = pkg1, pkg2, ..." line
+parseIpkgDepends : String -> List String
+parseIpkgDepends content =
+  let ls = lines content
+      dependsLines = filter (isPrefixOf "depends") (map trim ls)
+  in case dependsLines of
+       [] => []
+       (line :: _) =>
+         let afterEquals = trim $ snd $ break (== '=') line
+             -- Remove leading '=' if present
+             pkgStr = if isPrefixOf "=" afterEquals
+                        then trim (substr 1 (length afterEquals) afterEquals)
+                        else afterEquals
+         in map trim $ forget $ split (== ',') pkgStr
+
+||| Read depends from project's ipkg file
+readProjectDepends : String -> IO (List String)
+readProjectDepends projectDir = do
+  -- Try common ipkg names
+  let ipkgCandidates = [projectDir ++ "/lazycore.ipkg"
+                       , projectDir ++ "/package.ipkg"
+                       , projectDir ++ "/project.ipkg"]
+  tryReadFirst ipkgCandidates
+  where
+    tryReadFirst : List String -> IO (List String)
+    tryReadFirst [] = pure []
+    tryReadFirst (path :: rest) = do
+      Right content <- readFile path
+        | Left _ => tryReadFirst rest
+      pure $ parseIpkgDepends content
+
+-- =============================================================================
 -- Main Entry Point
 -- =============================================================================
 
@@ -121,6 +163,9 @@ runTestsWithCoverage projectDir testModules timeout = do
   case testModules of
     [] => pure $ Left "No test modules specified"
     _ => do
+      -- Read project dependencies
+      projectDepends <- readProjectDepends projectDir
+
       -- Generate unique names
       uid <- getUniqueId
       let tempModName = "TempTestRunner_" ++ uid
@@ -137,22 +182,9 @@ runTestsWithCoverage projectDir testModules timeout = do
       Right () <- writeFile tempIdrPath runnerSource
         | Left err => pure $ Left $ "Failed to write temp runner: " ++ show err
 
-      -- Generate temp .ipkg (include all Coverage modules + test modules)
-      let allModules = tempModName :: testModules ++
-            [ "Coverage.Types"
-            , "Coverage.Collector"
-            , "Coverage.SourceAnalyzer"
-            , "Coverage.TestRunner"
-            , "Coverage.Aggregator"
-            , "Coverage.Report"
-            , "Coverage.Linearity"
-            , "Coverage.TypeAnalyzer"
-            , "Coverage.StateSpace"
-            , "Coverage.PathAnalysis"
-            , "Coverage.Complexity"
-            , "Coverage.TestHint"
-            ]
-      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName
+      -- Generate temp .ipkg (test modules only - Coverage.* comes from idris2-coverage package)
+      let allModules = tempModName :: testModules
+      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName projectDepends
       Right () <- writeFile tempIpkgPath ipkgContent
         | Left err => do
             removeFileIfExists tempIdrPath
@@ -166,21 +198,25 @@ runTestsWithCoverage projectDir testModules timeout = do
           pure $ Left "Build failed"
         else do
           -- Run executable and capture output
-          let runCmd = "cd " ++ projectDir ++ " && " ++ execPath ++ " 2>&1"
+          -- Use relative path from projectDir (./build/exec/...) since we cd there
+          let relExecPath = "./build/exec/" ++ tempExecName
+          let runCmd = "cd " ++ projectDir ++ " && " ++ relExecPath ++ " 2>&1"
           runResult <- system runCmd
           -- Note: test failures shouldn't fail the whole run
 
           -- Read test output (need to capture it properly)
           -- For now, we'll read from a temp output file
-          let outputFile = projectDir ++ "/temp_test_output_" ++ uid ++ ".txt"
-          _ <- system $ "cd " ++ projectDir ++ " && " ++ execPath ++ " > " ++ outputFile ++ " 2>&1"
+          -- Use relative path for shell command (after cd) but absolute for Idris readFile
+          let relOutputFile = "./temp_test_output_" ++ uid ++ ".txt"
+          let absOutputFile = projectDir ++ "/temp_test_output_" ++ uid ++ ".txt"
+          _ <- system $ "cd " ++ projectDir ++ " && " ++ relExecPath ++ " > " ++ relOutputFile ++ " 2>&1"
 
-          Right testOutput <- readFile outputFile
+          Right testOutput <- readFile absOutputFile
             | Left _ => do
                 cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
                 pure $ Left "Failed to read test output"
 
-          removeFileIfExists outputFile
+          removeFileIfExists absOutputFile
 
           -- Parse test results
           let testResults = parseTestOutput testOutput
