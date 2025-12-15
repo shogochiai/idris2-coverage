@@ -1,0 +1,461 @@
+||| Parser for Idris2 --dumpcases output
+||| Extracts semantic coverage information (canonical vs impossible cases)
+|||
+||| Issue #5: Provides runDumpcases helper with correct syntax:
+|||   idris2 --dumpcases <output-file> --build <package.ipkg>
+module Coverage.DumpcasesParser
+
+import Coverage.Types
+import Data.List
+import Data.List1
+import Data.String
+import Data.Maybe
+import System
+import System.File
+
+%default covering
+
+-- =============================================================================
+-- Semantic Coverage Types
+-- =============================================================================
+
+||| Reason for CRASH in --dumpcases output
+||| Critical distinction: only CrashImpossible should be excluded from denominator
+public export
+data CrashReason : Type where
+  ||| CaseTree.Impossible derived - proven by types, exclude from denominator
+  CrashImpossible : CrashReason
+  ||| Partial match fallback (Missing cases) - unimplemented bug, include in denominator
+  CrashNotCovered : CrashReason
+  ||| Empty function (No clauses) - exclude from denominator
+  CrashNoClauses  : CrashReason
+  ||| Other CRASH reasons
+  CrashOther      : String -> CrashReason
+
+public export
+Show CrashReason where
+  show CrashImpossible   = "Impossible"
+  show CrashNotCovered   = "NotCovered"
+  show CrashNoClauses    = "NoClauses"
+  show (CrashOther msg)  = "Other(" ++ msg ++ ")"
+
+public export
+Eq CrashReason where
+  CrashImpossible  == CrashImpossible  = True
+  CrashNotCovered  == CrashNotCovered  = True
+  CrashNoClauses   == CrashNoClauses   = True
+  CrashOther m1    == CrashOther m2    = m1 == m2
+  _                == _                = False
+
+||| Case classification for semantic coverage
+public export
+data CaseKind : Type where
+  ||| Reachable case - included in denominator
+  Canonical    : CaseKind
+  ||| Unreachable/undefined - excluded from denominator or handled separately
+  NonCanonical : CrashReason -> CaseKind
+
+public export
+Show CaseKind where
+  show Canonical         = "Canonical"
+  show (NonCanonical r)  = "NonCanonical(" ++ show r ++ ")"
+
+public export
+Eq CaseKind where
+  Canonical       == Canonical       = True
+  NonCanonical r1 == NonCanonical r2 = r1 == r2
+  _               == _               = False
+
+-- =============================================================================
+-- Compiled Case with CaseKind
+-- =============================================================================
+
+||| A single case branch in compiled output with semantic classification
+public export
+record CompiledCase where
+  constructor MkCompiledCase
+  clauseId : Maybe Int       -- STerm clause ID if extractable
+  kind     : CaseKind        -- Canonical or NonCanonical with reason
+  pattern  : String          -- Pattern description (for debugging)
+
+public export
+Show CompiledCase where
+  show c = "Case(" ++ show c.kind ++ ", " ++ c.pattern ++ ")"
+
+||| Compiled function information extracted from --dumpcases
+public export
+record CompiledFunction where
+  constructor MkCompiledFunction
+  fullName       : String              -- e.g., "AbsurdTest.safeHead"
+  moduleName     : String              -- e.g., "AbsurdTest"
+  funcName       : String              -- e.g., "safeHead"
+  arity          : Nat                 -- Number of arguments
+  cases          : List CompiledCase   -- All cases with classification
+  hasDefaultCase : Bool                -- Whether a catch-all exists
+
+public export
+Show CompiledFunction where
+  show f = f.fullName ++ ": " ++ show (countCanonical f.cases) ++ " canonical, "
+        ++ show (countNonCanonical f.cases) ++ " non-canonical"
+  where
+    countCanonical : List CompiledCase -> Nat
+    countCanonical = length . filter (\c => c.kind == Canonical)
+
+    countNonCanonical : List CompiledCase -> Nat
+    countNonCanonical = length . filter (\c => c.kind /= Canonical)
+
+-- =============================================================================
+-- Semantic Coverage Record
+-- =============================================================================
+
+||| Semantic coverage for a function (per Eremondi-Kammar 2025)
+public export
+record SemanticCoverage where
+  constructor MkSemanticCoverage
+  funcName          : String
+  totalCanonical    : Nat    -- |{CanonicalCaseId}| - denominator
+  totalImpossible   : Nat    -- |{Impossible derived}| - reference value
+  executedCanonical : Nat    -- Canonical cases hit at runtime - numerator
+
+public export
+Show SemanticCoverage where
+  show sc = sc.funcName ++ ": " ++ show sc.executedCanonical
+         ++ "/" ++ show sc.totalCanonical ++ " semantic"
+
+public export
+Eq SemanticCoverage where
+  sc1 == sc2 = sc1.funcName == sc2.funcName
+            && sc1.totalCanonical == sc2.totalCanonical
+
+||| Calculate semantic coverage percentage
+public export
+semanticCoveragePercent : SemanticCoverage -> Double
+semanticCoveragePercent sc =
+  if sc.totalCanonical == 0
+  then 100.0  -- All impossible cases → 100%
+  else cast sc.executedCanonical / cast sc.totalCanonical * 100.0
+
+-- =============================================================================
+-- Summary Statistics
+-- =============================================================================
+
+||| Summary of semantic coverage analysis for a module/project
+public export
+record SemanticAnalysis where
+  constructor MkSemanticAnalysis
+  totalFunctions      : Nat
+  totalCanonical      : Nat    -- Sum of all canonical (reachable) cases
+  totalImpossible     : Nat    -- Sum of all impossible (type-excluded) cases
+  totalNotCovered     : Nat    -- Sum of all not-covered (bug) cases
+  functionsWithCrash  : Nat    -- Functions that have at least one CRASH
+
+public export
+Show SemanticAnalysis where
+  show a = unlines
+    [ "Semantic Coverage Analysis:"
+    , "  Functions analyzed: " ++ show a.totalFunctions
+    , "  Total canonical cases: " ++ show a.totalCanonical
+    , "  Total impossible cases: " ++ show a.totalImpossible
+    , "  Total not-covered cases: " ++ show a.totalNotCovered
+    , "  Functions with CRASH: " ++ show a.functionsWithCrash
+    ]
+
+-- =============================================================================
+-- CrashReason Detection from CRASH Messages
+-- =============================================================================
+
+||| Determine CrashReason from CRASH message text
+||| Key patterns:
+|||   "Impossible case encountered in ..." -> CrashImpossible
+|||   "... case not covered" -> CrashNotCovered
+|||   "No clauses in ..." -> CrashNoClauses
+public export
+classifyCrashMessage : String -> CrashReason
+classifyCrashMessage msg =
+  if isInfixOf "Impossible case" msg then CrashImpossible
+  else if isInfixOf "not covered" msg then CrashNotCovered
+  else if isInfixOf "No clauses" msg then CrashNoClauses
+  else CrashOther msg
+
+-- =============================================================================
+-- Parser Utilities
+-- =============================================================================
+
+||| Split on first occurrence of a character
+splitFirst : Char -> String -> Maybe (String, String)
+splitFirst c s =
+  case break (== c) (unpack s) of
+    (before, []) => Nothing
+    (before, _ :: after) => Just (pack before, pack after)
+
+||| Extract module and function name from "Module.Name.funcName"
+parseFullName : String -> (String, String)
+parseFullName fullName =
+  let parts = toList $ split (== '.') fullName
+  in case parts of
+       [] => ("", fullName)
+       [x] => ("", x)
+       (x :: y :: []) => (x, y)
+       (x :: rest) => (x, fromMaybe "" (last' rest))
+  where
+    toList : List1 a -> List a
+    toList (x ::: xs) = x :: xs
+
+-- =============================================================================
+-- Pattern Detection
+-- =============================================================================
+
+||| Check if text contains CRASH marker
+hasCrash : String -> Bool
+hasCrash s = isInfixOf "(CRASH " s
+
+||| Simple substring search - returns index of first occurrence
+findSubstring : String -> String -> Maybe Nat
+findSubstring needle haystack = go 0 (unpack haystack) (unpack needle)
+  where
+    go : Nat -> List Char -> List Char -> Maybe Nat
+    go _ [] _ = Nothing
+    go idx hs ns =
+      if isPrefixOf ns hs
+      then Just idx
+      else go (S idx) (drop 1 hs) ns
+
+||| Extract CRASH message if present
+extractCrashMsg : String -> Maybe String
+extractCrashMsg s =
+  if isInfixOf "(CRASH \"" s
+  then case findSubstring "(CRASH \"" s of
+         Nothing => Nothing
+         Just idx =>
+           let afterCrash = substr (idx + 8) (length s) s
+           in case break (== '"') (unpack afterCrash) of
+                (msg, _) => Just (pack msg)
+  else Nothing
+
+||| Count %concase occurrences (reachable constructor branches)
+countConCases : String -> Nat
+countConCases s = go 0 (unpack s)
+  where
+    go : Nat -> List Char -> Nat
+    go n [] = n
+    go n cs =
+      if isPrefixOf (unpack "(%concase") cs
+      then go (S n) (drop 9 cs)
+      else go n (drop 1 cs)
+
+||| Count %constcase occurrences (reachable constant branches)
+countConstCases : String -> Nat
+countConstCases s = go 0 (unpack s)
+  where
+    go : Nat -> List Char -> Nat
+    go n [] = n
+    go n cs =
+      if isPrefixOf (unpack "(%constcase") cs
+      then go (S n) (drop 11 cs)
+      else go n (drop 1 cs)
+
+-- =============================================================================
+-- Main Analysis
+-- =============================================================================
+
+||| Analyze a single function definition line from --dumpcases output
+public export
+analyzeFunction : String -> Maybe CompiledFunction
+analyzeFunction line =
+  case splitFirst '=' line of
+    Nothing => Nothing
+    Just (namePart, bodyPart) =>
+      let fullName = trim namePart
+          (modName, funcName) = parseFullName fullName
+          conCases = countConCases bodyPart
+          constCases = countConstCases bodyPart
+          crashMsg = extractCrashMsg bodyPart
+          hasDefault = isInfixOf "Just" bodyPart &&
+                       not (isInfixOf "Just 0" bodyPart || isInfixOf "Just 1" bodyPart)
+
+          -- Build canonical cases
+          canonicalCases = replicate conCases (MkCompiledCase Nothing Canonical "concase")
+                        ++ replicate constCases (MkCompiledCase Nothing Canonical "constcase")
+
+          -- Build non-canonical cases from CRASH
+          crashCases = case crashMsg of
+            Nothing => []
+            Just msg => [MkCompiledCase Nothing (NonCanonical (classifyCrashMessage msg)) msg]
+
+      in Just $ MkCompiledFunction
+           fullName
+           modName
+           funcName
+           0  -- TODO: parse arity from [{arg:0}, ...]
+           (canonicalCases ++ crashCases)
+           hasDefault
+
+-- =============================================================================
+-- Helper Functions for Analysis
+-- =============================================================================
+
+||| Check if case is impossible (type-excluded)
+isImpossibleCase : CompiledCase -> Bool
+isImpossibleCase c = case c.kind of
+  NonCanonical CrashImpossible => True
+  NonCanonical CrashNoClauses  => True
+  _ => False
+
+||| Check if case is not-covered (bug, should be implemented)
+isNotCoveredCase : CompiledCase -> Bool
+isNotCoveredCase c = case c.kind of
+  NonCanonical CrashNotCovered => True
+  NonCanonical (CrashOther _)  => True
+  _ => False
+
+||| Count canonical cases in a function
+countCanonicalCases : CompiledFunction -> Nat
+countCanonicalCases f = length $ filter (\c => c.kind == Canonical) f.cases
+
+||| Count impossible cases in a function
+countImpossibleCases : CompiledFunction -> Nat
+countImpossibleCases f = length $ filter isImpossibleCase f.cases
+
+||| Count not-covered cases in a function
+countNotCoveredCases : CompiledFunction -> Nat
+countNotCoveredCases f = length $ filter isNotCoveredCase f.cases
+
+||| Check if function has any CRASH
+hasAnyCrash : CompiledFunction -> Bool
+hasAnyCrash f = any (\c => c.kind /= Canonical) f.cases
+
+-- =============================================================================
+-- File Parsing
+-- =============================================================================
+
+||| Parse entire --dumpcases output file
+public export
+parseDumpcasesFile : String -> List CompiledFunction
+parseDumpcasesFile content =
+  let ls = lines content
+  in mapMaybe analyzeFunction ls
+
+||| Aggregate analysis over all functions
+public export
+aggregateAnalysis : List CompiledFunction -> SemanticAnalysis
+aggregateAnalysis funcs =
+  MkSemanticAnalysis
+    (length funcs)
+    (sum $ map countCanonicalCases funcs)
+    (sum $ map countImpossibleCases funcs)
+    (sum $ map countNotCoveredCases funcs)
+    (length $ filter hasAnyCrash funcs)
+
+||| Convert CompiledFunction to SemanticCoverage
+public export
+toSemanticCoverage : CompiledFunction -> SemanticCoverage
+toSemanticCoverage f =
+  MkSemanticCoverage
+    f.fullName
+    (length $ filter (\c => c.kind == Canonical) f.cases)
+    (length $ filter isImpossibleCase f.cases)
+    0  -- executedCanonical comes from runtime profiler
+
+-- =============================================================================
+-- Issue #5: runDumpcases Helper
+-- =============================================================================
+
+||| Run idris2 --dumpcases with correct syntax
+|||
+||| The correct syntax is: idris2 --dumpcases <output-file> --build <package.ipkg>
+|||
+||| This is non-obvious because:
+||| 1. --dumpcases is not documented in --help
+||| 2. It requires an output file argument
+||| 3. It must be paired with --build
+|||
+||| @projectDir - Directory containing the .ipkg file
+||| @ipkgName   - Name of the .ipkg file (e.g., "myproject.ipkg")
+||| @outputFile - Where to write dumpcases output (default: /tmp/dumpcases.txt)
+||| @returns    - Either error message or the dumpcases content
+public export
+runDumpcases : (projectDir : String)
+             -> (ipkgName : String)
+             -> (outputFile : String)
+             -> IO (Either String String)
+runDumpcases projectDir ipkgName outputFile = do
+  -- Build the command with correct syntax:
+  -- idris2 --dumpcases <output-file> --build <package.ipkg>
+  let cmd = "cd " ++ projectDir ++ " && idris2 --dumpcases " ++ outputFile
+         ++ " --build " ++ ipkgName ++ " 2>/dev/null"
+
+  -- Execute the command
+  exitCode <- system cmd
+
+  -- Read the generated output file
+  result <- readFile outputFile
+  case result of
+    Left err => pure $ Left $ "Failed to read dumpcases output: " ++ show err
+    Right content =>
+      if null (trim content)
+        then pure $ Left "No dumpcases output generated (build may have failed)"
+        else pure $ Right content
+
+||| Convenience wrapper with default output file
+public export
+runDumpcasesDefault : (projectDir : String) -> (ipkgName : String) -> IO (Either String String)
+runDumpcasesDefault projectDir ipkgName =
+  runDumpcases projectDir ipkgName "/tmp/idris2_dumpcases_output.txt"
+
+-- =============================================================================
+-- Runtime Hit Mapping
+-- =============================================================================
+
+||| Map profiler hits to canonical case IDs per function
+public export
+record FunctionHitMapping where
+  constructor MkFunctionHitMapping
+  funcName          : String
+  totalCanonical    : Nat
+  executedCanonical : Nat
+
+public export
+Show FunctionHitMapping where
+  show m = m.funcName ++ ": " ++ show m.executedCanonical
+        ++ "/" ++ show m.totalCanonical ++ " executed"
+
+||| Convert Idris module.func to Scheme Module-func format
+idrisToSchemePrefix : String -> String
+idrisToSchemePrefix s = pack $ map (\c => if c == '.' then '-' else c) (unpack s)
+
+||| Find executed count for a function from line-grouped hits
+findExecutedForFunc : String -> List (Nat, Nat, Nat) -> Nat
+findExecutedForFunc schemePrefix lineHits =
+  sum $ map (\(_, executed, _) => executed) lineHits
+
+||| Match a single compiled function with profiler expression data
+matchOneFunction : List (Nat, Nat, Nat) -> CompiledFunction -> FunctionHitMapping
+matchOneFunction lineHits f =
+  let canonical = countCanonicalCases f
+      executed = findExecutedForFunc (idrisToSchemePrefix f.fullName) lineHits
+  in MkFunctionHitMapping f.fullName canonical (min executed canonical)
+
+||| Match compiled functions with profiler expression data
+||| lineHits: from Coverage.Collector.groupByLine
+public export
+matchFunctionHits : List CompiledFunction -> List (Nat, Nat, Nat) -> List FunctionHitMapping
+matchFunctionHits funcs lineHits = map (matchOneFunction lineHits) funcs
+
+||| Calculate total executed canonical from hit mappings
+public export
+totalExecutedFromMappings : List FunctionHitMapping -> Nat
+totalExecutedFromMappings = sum . map (.executedCanonical)
+
+||| Calculate semantic coverage with runtime hits
+||| Combines static analysis (--dumpcases) with runtime profiler data
+public export
+semanticCoverageWithHits : List CompiledFunction -> List (Nat, Nat, Nat) -> SemanticCoverage
+semanticCoverageWithHits funcs lineHits =
+  let mappings = matchFunctionHits funcs lineHits
+      analysis = aggregateAnalysis funcs
+      executed = totalExecutedFromMappings mappings
+  in MkSemanticCoverage
+       "project"
+       analysis.totalCanonical
+       analysis.totalImpossible
+       executed

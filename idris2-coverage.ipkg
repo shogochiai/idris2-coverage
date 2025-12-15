@@ -22,6 +22,8 @@ modules = Main
         , Coverage.Complexity
         , Coverage.TestHint
         , Coverage.UnifiedRunner
+        , Coverage.DumpcasesParser
+        , Coverage.SemanticCoverage
         , Coverage.Tests.AllTests
 
 executable = idris2-cov

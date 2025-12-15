@@ -126,6 +126,7 @@ runTestsWithCoverage projectDir testModules timeout = do
       let tempExecName = "temp-test-" ++ uid
       let tempIdrPath = projectDir ++ "/src/" ++ tempModName ++ ".idr"
       let tempIpkgPath = projectDir ++ "/" ++ tempExecName ++ ".ipkg"
+      -- Chez Scheme profiler generates .ss.html in the current working directory (where executable runs)
       let ssHtmlPath = projectDir ++ "/" ++ tempExecName ++ ".ss.html"
       let profileHtmlPath = projectDir ++ "/profile.html"
       let execPath = projectDir ++ "/build/exec/" ++ tempExecName
