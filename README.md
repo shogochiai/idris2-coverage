@@ -23,17 +23,11 @@ main = do
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │                     SEMANTIC COVERAGE                                │
-│  idris2 --dumpcases myproject.ipkg                                  │
+│  analyzeProject "myproject.ipkg"                                    │
+│    → idris2 --dumpcases (internally)                                │
 │    → CaseTree output → DumpcasesParser                              │
 │    → Canonical vs Impossible vs NotCovered classification           │
 │    → Coverage = executed_canonical / total_canonical                │
-└─────────────────────────────────────────────────────────────────────┘
-                                  ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│                        LAZY INTEGRATION                              │
-│  Lazy STI Parity → runCoveragePass                                  │
-│    → Gaps for uncovered canonical cases                             │
-│    → Signal.Adaptor for real-time coverage data                     │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -135,88 +129,6 @@ record SemanticAnalysis where
   totalImpossible     : Nat
   totalNotCovered     : Nat    -- Bugs
   functionsWithCrash  : Nat
-```
-
-## Lazy Integration
-
-### Integration Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                           LAZY CLI                                   │
-│  lazy core ask                                                       │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│  LazyCore/src/Ask/TestAndCoverage.idr                               │
-│                                                                      │
-│  runCoveragePass : AskOptions -> IO (List Gap, StepStatus)          │
-│    1. idris2 --dumpcases → parseDumpcasesFile                       │
-│    2. runTestsWithCoverage → runtime hits                           │
-│    3. semanticCoverageWithHits → coverage %                         │
-│    4. Convert uncovered → Gaps                                      │
-└─────────────────────────────────────────────────────────────────────┘
-                                  │
-                                  ↓
-┌─────────────────────────────────────────────────────────────────────┐
-│  LazyCore/src/Coverage/Report.idr                                   │
-│                                                                      │
-│  semanticReportJson : SemanticAnalysis -> List SemanticCoverage     │
-│                     -> String                                        │
-│  semanticReportText : SemanticAnalysis -> List SemanticCoverage     │
-│                     -> String                                        │
-└─────────────────────────────────────────────────────────────────────┘
-```
-
-### Usage in Lazy STI Parity
-
-```idris
--- LazyCore imports idris2-coverage
-import Coverage.DumpcasesParser
-import Coverage.Types
-import Coverage.TestRunner
-
--- In STI Parity Step 4 (Test & Coverage)
--- Semantic coverage is the only mode
-runCoveragePass : AskOptions -> IO (List Gap, StepStatus)
-```
-
-### Gap Generation
-
-```idris
--- Uncovered canonical cases become Gaps
-semanticCoverageToGaps : SemanticCoverage -> List Gap
-semanticCoverageToGaps sc =
-  let uncovered = sc.totalCanonical `minus` sc.executedCanonical
-  in if uncovered > 0
-       then [MkGap
-               ("semantic:uncovered:" ++ sc.funcName)
-               "test-and-coverage"
-               (MkModulePath "core" "LazyCore" [] sc.funcName)
-               (show sc.executedCanonical ++ "/" ++ show sc.totalCanonical ++ " canonical cases")
-               Warning
-               Nothing Nothing]
-       else []
-```
-
-### Signal.Adaptor Interface (Future)
-
-For real-time coverage data streaming:
-
-```idris
--- Signal.Adaptor provides reactive coverage updates
--- (Planned for deeper Lazy integration)
-
-record CoverageSignal where
-  constructor MkCoverageSignal
-  funcName   : String
-  canonical  : Nat
-  executed   : Nat
-  timestamp  : Integer
-
--- Adaptor converts coverage events to Signals
-coverageToSignal : SemanticCoverage -> CoverageSignal
 ```
 
 ## Output Formats
