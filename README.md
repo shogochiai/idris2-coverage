@@ -2,6 +2,8 @@
 
 **Semantic coverage library** for Idris2. Uses `--dumpcases` output to measure canonical case coverage with type-awareness.
 
+Based on the STI Parity framework: [arXiv:2501.18087](https://arxiv.org/abs/2501.18087)
+
 ## Quick Start
 
 ```idris
