@@ -416,6 +416,7 @@ excludeTestModules : List (String, Nat) -> List (String, Nat)
 excludeTestModules = filter (\(name, _) => not (isTestModule name))
 
 ||| Filter out branch points that belong to test modules
+export
 excludeTestBranchPoints : List (String, Nat) -> List BranchPoint -> List BranchPoint
 excludeTestBranchPoints funcDefs bps =
   filter (isProductionBranch funcDefs) bps

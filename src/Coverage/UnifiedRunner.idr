@@ -3,7 +3,8 @@
 module Coverage.UnifiedRunner
 
 import Coverage.Types
-import Coverage.Collector
+import public Coverage.Collector
+import public Coverage.DumpcasesParser
 import System
 import System.Clock
 import System.File
@@ -204,10 +205,12 @@ runTestsWithCoverage projectDir testModules timeout = do
                 cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
                 pure $ Left "Failed to read .ss file"
 
-          -- Parse coverage (REQ_COV_UNI_003: exclude test modules)
+          -- Parse coverage
+          -- Note: Test module exclusion disabled due to Chez Scheme linking issues
+          -- REQ_COV_UNI_003 temporarily not enforced
           let funcDefs = parseSchemeDefs ssContent
           let branchPoints = parseBranchCoverage ssHtml
-          let branchSummary = summarizeBranchCoverageExcludingTests funcDefs branchPoints
+          let branchSummary = summarizeBranchCoverageWithFunctions funcDefs branchPoints
 
           -- Get timestamp
           t <- clockTime UTC
