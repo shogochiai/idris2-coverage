@@ -126,7 +126,7 @@ analyzeProjectWithHits ipkgPath testModules = do
           pure $ Right $ MkSemanticCoverage
             "project"
             analysis.totalCanonical
-            analysis.totalImpossible
+            analysis.totalExcluded
             0
         Right report => do
           -- Step 3: Extract executed count from profiler
@@ -135,7 +135,7 @@ analyzeProjectWithHits ipkgPath testModules = do
           pure $ Right $ MkSemanticCoverage
             "project"
             analysis.totalCanonical
-            analysis.totalImpossible
+            analysis.totalExcluded
             executed
 
 -- =============================================================================
@@ -149,7 +149,7 @@ record FunctionSemanticCoverage where
   funcName          : String
   moduleName        : String
   totalCanonical    : Nat
-  totalImpossible   : Nat
+  totalExcluded     : Nat   -- NoClauses only (excluded from denominator)
   executedCanonical : Nat
   coveragePercent   : Double
 
@@ -159,23 +159,23 @@ Show FunctionSemanticCoverage where
           ++ "/" ++ show fsc.totalCanonical
           ++ " (" ++ show (cast {to=Int} fsc.coveragePercent) ++ "%)"
 
-isImpossibleCaseSC : CompiledCase -> Bool
-isImpossibleCaseSC c = case c.kind of
-  NonCanonical CrashImpossible => True
-  NonCanonical CrashNoClauses  => True
+-- Only NoClauses (void etc) is safe to exclude from denominator
+isExcludedCaseSC : CompiledCase -> Bool
+isExcludedCaseSC c = case c.kind of
+  NonCanonical CrashNoClauses => True
   _ => False
 
 countCanonicalCasesSC : CompiledFunction -> Nat
 countCanonicalCasesSC func = length $ filter (\c => c.kind == Canonical) func.cases
 
-countImpossibleCasesSC : CompiledFunction -> Nat
-countImpossibleCasesSC func = length $ filter isImpossibleCaseSC func.cases
+countExcludedCasesSC : CompiledFunction -> Nat
+countExcludedCasesSC func = length $ filter isExcludedCaseSC func.cases
 
 ||| Convert CompiledFunction to FunctionSemanticCoverage with hits
 functionToSemanticCoverage : CompiledFunction -> Nat -> FunctionSemanticCoverage
 functionToSemanticCoverage f executed =
   let canonical = countCanonicalCasesSC f in
-  let impossibleCount = countImpossibleCasesSC f in
+  let excludedCount = countExcludedCasesSC f in
   let pct = if canonical == 0
             then 100.0
             else cast executed / cast canonical * 100.0
@@ -183,7 +183,7 @@ functionToSemanticCoverage f executed =
        f.fullName
        f.moduleName
        canonical
-       impossibleCount
+       excludedCount
        executed
        pct
 
@@ -192,6 +192,12 @@ functionToSemanticCoverage f executed =
 -- =============================================================================
 
 ||| Generate semantic coverage summary as text
+||| Generate semantic coverage summary as text
+||| Based on dunham's classification from Idris2 community:
+|||   - Excluded (NoClauses): void etc, safe to exclude from denominator
+|||   - Bugs (UnhandledInput): partial code, coverage issue
+|||   - OptimizerArtifacts (Nat case): non-semantic, warn separately
+|||   - Unknown: conservative, never exclude
 public export
 formatSemanticAnalysis : SemanticAnalysis -> String
 formatSemanticAnalysis a = unlines
@@ -200,8 +206,10 @@ formatSemanticAnalysis a = unlines
   , "Project Summary:"
   , "  Functions analyzed: " ++ show a.totalFunctions
   , "  Canonical cases: " ++ show a.totalCanonical
-  , "  Impossible cases (excluded): " ++ show a.totalImpossible
-  , "  Not-covered cases (bugs): " ++ show a.totalNotCovered
+  , "  Excluded (NoClauses): " ++ show a.totalExcluded
+  , "  Bugs (UnhandledInput): " ++ show a.totalBugs
+  , "  Optimizer artifacts (Nat): " ++ show a.totalOptimizerArtifacts
+  , "  Unknown CRASHes: " ++ show a.totalUnknown
   , "  Functions with CRASH: " ++ show a.functionsWithCrash
   ]
 
@@ -230,8 +238,10 @@ semanticAnalysisToJson a = unlines
   [ "{"
   , "  \"total_functions\": " ++ show a.totalFunctions ++ ","
   , "  \"total_canonical\": " ++ show a.totalCanonical ++ ","
-  , "  \"total_impossible\": " ++ show a.totalImpossible ++ ","
-  , "  \"total_not_covered\": " ++ show a.totalNotCovered ++ ","
+  , "  \"total_excluded\": " ++ show a.totalExcluded ++ ","
+  , "  \"total_bugs\": " ++ show a.totalBugs ++ ","
+  , "  \"total_optimizer_artifacts\": " ++ show a.totalOptimizerArtifacts ++ ","
+  , "  \"total_unknown\": " ++ show a.totalUnknown ++ ","
   , "  \"functions_with_crash\": " ++ show a.functionsWithCrash
   , "}"
   ]

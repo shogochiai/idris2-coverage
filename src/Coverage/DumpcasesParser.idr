@@ -20,32 +20,36 @@ import System.File
 -- =============================================================================
 
 ||| Reason for CRASH in --dumpcases output
-||| Critical distinction: only CrashImpossible should be excluded from denominator
+||| Based on Idris2 community feedback (dunham, Thomas):
+|||   - "No clauses in ..."     → Excluded (void etc, safe to exclude from denominator)
+|||   - "Unhandled input for ..." → Bug (partial code, genuine coverage issue)
+|||   - "Nat case not covered"  → OptimizerArtifact (Nat→Integer translation, non-semantic)
+|||   - Other                   → Unknown (never exclude, show separately)
 public export
 data CrashReason : Type where
-  ||| CaseTree.Impossible derived - proven by types, exclude from denominator
-  CrashImpossible : CrashReason
-  ||| Partial match fallback (Missing cases) - unimplemented bug, include in denominator
-  CrashNotCovered : CrashReason
-  ||| Empty function (No clauses) - exclude from denominator
-  CrashNoClauses  : CrashReason
-  ||| Other CRASH reasons
-  CrashOther      : String -> CrashReason
+  ||| "No clauses in ..." - empty function (void etc), EXCLUDED from denominator
+  CrashNoClauses      : CrashReason
+  ||| "Unhandled input for ..." - partial code bug, INCLUDED as coverage gap
+  CrashUnhandledInput : CrashReason
+  ||| "Nat case not covered" - optimizer artifact, NON-SEMANTIC (separate warning)
+  CrashOptimizerNat   : CrashReason
+  ||| Unknown CRASH - NEVER exclude, show in Unknown bucket
+  CrashUnknown        : String -> CrashReason
 
 public export
 Show CrashReason where
-  show CrashImpossible   = "Impossible"
-  show CrashNotCovered   = "NotCovered"
-  show CrashNoClauses    = "NoClauses"
-  show (CrashOther msg)  = "Other(" ++ msg ++ ")"
+  show CrashNoClauses       = "NoClauses"
+  show CrashUnhandledInput  = "UnhandledInput"
+  show CrashOptimizerNat    = "OptimizerNat"
+  show (CrashUnknown msg)   = "Unknown(" ++ msg ++ ")"
 
 public export
 Eq CrashReason where
-  CrashImpossible  == CrashImpossible  = True
-  CrashNotCovered  == CrashNotCovered  = True
-  CrashNoClauses   == CrashNoClauses   = True
-  CrashOther m1    == CrashOther m2    = m1 == m2
-  _                == _                = False
+  CrashNoClauses      == CrashNoClauses      = True
+  CrashUnhandledInput == CrashUnhandledInput = True
+  CrashOptimizerNat   == CrashOptimizerNat   = True
+  CrashUnknown m1     == CrashUnknown m2     = m1 == m2
+  _                   == _                   = False
 
 ||| Case classification for semantic coverage
 public export
@@ -140,23 +144,32 @@ semanticCoveragePercent sc =
 -- =============================================================================
 
 ||| Summary of semantic coverage analysis for a module/project
+||| Breakdown based on dunham's classification:
+|||   - excluded: NoClauses (void etc) - safe to exclude from denominator
+|||   - bugs: UnhandledInput (partial) - genuine coverage issues
+|||   - optimizerArtifacts: OptimizerNat - non-semantic, warn separately
+|||   - unknown: CrashUnknown - never exclude, show in Unknown bucket
 public export
 record SemanticAnalysis where
   constructor MkSemanticAnalysis
-  totalFunctions      : Nat
-  totalCanonical      : Nat    -- Sum of all canonical (reachable) cases
-  totalImpossible     : Nat    -- Sum of all impossible (type-excluded) cases
-  totalNotCovered     : Nat    -- Sum of all not-covered (bug) cases
-  functionsWithCrash  : Nat    -- Functions that have at least one CRASH
+  totalFunctions       : Nat
+  totalCanonical       : Nat   -- Reachable cases (denominator for coverage)
+  totalExcluded        : Nat   -- NoClauses (void etc) - excluded from denominator
+  totalBugs            : Nat   -- UnhandledInput (partial) - coverage gaps
+  totalOptimizerArtifacts : Nat -- Nat case not covered - non-semantic warnings
+  totalUnknown         : Nat   -- Unknown CRASHes - never exclude, show separately
+  functionsWithCrash   : Nat
 
 public export
 Show SemanticAnalysis where
   show a = unlines
     [ "Semantic Coverage Analysis:"
     , "  Functions analyzed: " ++ show a.totalFunctions
-    , "  Total canonical cases: " ++ show a.totalCanonical
-    , "  Total impossible cases: " ++ show a.totalImpossible
-    , "  Total not-covered cases: " ++ show a.totalNotCovered
+    , "  Canonical cases (denominator): " ++ show a.totalCanonical
+    , "  Excluded (NoClauses): " ++ show a.totalExcluded
+    , "  Bugs (UnhandledInput): " ++ show a.totalBugs
+    , "  Optimizer artifacts: " ++ show a.totalOptimizerArtifacts
+    , "  Unknown CRASHes: " ++ show a.totalUnknown
     , "  Functions with CRASH: " ++ show a.functionsWithCrash
     ]
 
@@ -165,17 +178,22 @@ Show SemanticAnalysis where
 -- =============================================================================
 
 ||| Determine CrashReason from CRASH message text
-||| Key patterns:
-|||   "Impossible case encountered in ..." -> CrashImpossible
-|||   "... case not covered" -> CrashNotCovered
-|||   "No clauses in ..." -> CrashNoClauses
+||| Based on dunham's Idris2 community feedback:
+|||   "No clauses in ..."         → CrashNoClauses (void etc, excluded)
+|||   "Unhandled input for ..."   → CrashUnhandledInput (partial bug, coverage gap)
+|||   "Nat case not covered"      → CrashOptimizerNat (optimizer artifact, non-semantic)
+|||   Other                       → CrashUnknown (never exclude)
+|||
+||| Order matters: more specific patterns first
 public export
 classifyCrashMessage : String -> CrashReason
 classifyCrashMessage msg =
-  if isInfixOf "Impossible case" msg then CrashImpossible
-  else if isInfixOf "not covered" msg then CrashNotCovered
-  else if isInfixOf "No clauses" msg then CrashNoClauses
-  else CrashOther msg
+  -- Most specific first
+  if isInfixOf "No clauses in" msg then CrashNoClauses
+  else if isInfixOf "Unhandled input for" msg then CrashUnhandledInput
+  else if isInfixOf "Nat case not covered" msg then CrashOptimizerNat
+  -- Fallback: everything else is Unknown (conservative - never exclude)
+  else CrashUnknown msg
 
 -- =============================================================================
 -- Parser Utilities
@@ -294,29 +312,57 @@ analyzeFunction line =
 -- Helper Functions for Analysis
 -- =============================================================================
 
-||| Check if case is impossible (type-excluded)
-isImpossibleCase : CompiledCase -> Bool
-isImpossibleCase c = case c.kind of
-  NonCanonical CrashImpossible => True
-  NonCanonical CrashNoClauses  => True
+||| Check if case should be EXCLUDED from denominator
+||| Only CrashNoClauses (void etc) is safe to exclude
+isExcludedCase : CompiledCase -> Bool
+isExcludedCase c = case c.kind of
+  NonCanonical CrashNoClauses => True
   _ => False
 
-||| Check if case is not-covered (bug, should be implemented)
-isNotCoveredCase : CompiledCase -> Bool
-isNotCoveredCase c = case c.kind of
-  NonCanonical CrashNotCovered => True
-  NonCanonical (CrashOther _)  => True
+||| Check if case is a coverage BUG (partial code, should be fixed)
+isBugCase : CompiledCase -> Bool
+isBugCase c = case c.kind of
+  NonCanonical CrashUnhandledInput => True
   _ => False
+
+||| Check if case is an optimizer artifact (non-semantic, warn but don't count)
+isOptimizerArtifact : CompiledCase -> Bool
+isOptimizerArtifact c = case c.kind of
+  NonCanonical CrashOptimizerNat => True
+  _ => False
+
+||| Check if case is unknown CRASH (never exclude, show in Unknown bucket)
+isUnknownCase : CompiledCase -> Bool
+isUnknownCase c = case c.kind of
+  NonCanonical (CrashUnknown _) => True
+  _ => False
+
+||| Legacy: Check if case is not-covered (bug, should be implemented)
+||| Now includes UnhandledInput and Unknown (conservative)
+isNotCoveredCase : CompiledCase -> Bool
+isNotCoveredCase c = isBugCase c || isUnknownCase c
 
 ||| Count canonical cases in a function
 countCanonicalCases : CompiledFunction -> Nat
 countCanonicalCases f = length $ filter (\c => c.kind == Canonical) f.cases
 
-||| Count impossible cases in a function
-countImpossibleCases : CompiledFunction -> Nat
-countImpossibleCases f = length $ filter isImpossibleCase f.cases
+||| Count excluded cases (NoClauses only)
+countExcludedCases : CompiledFunction -> Nat
+countExcludedCases f = length $ filter isExcludedCase f.cases
 
-||| Count not-covered cases in a function
+||| Count bug cases (UnhandledInput - partial code)
+countBugCases : CompiledFunction -> Nat
+countBugCases f = length $ filter isBugCase f.cases
+
+||| Count optimizer artifact cases (Nat case not covered)
+countOptimizerArtifacts : CompiledFunction -> Nat
+countOptimizerArtifacts f = length $ filter isOptimizerArtifact f.cases
+
+||| Count unknown CRASH cases
+countUnknownCases : CompiledFunction -> Nat
+countUnknownCases f = length $ filter isUnknownCase f.cases
+
+||| Legacy: Count not-covered cases (Bug + Unknown)
 countNotCoveredCases : CompiledFunction -> Nat
 countNotCoveredCases f = length $ filter isNotCoveredCase f.cases
 
@@ -342,8 +388,10 @@ aggregateAnalysis funcs =
   MkSemanticAnalysis
     (length funcs)
     (sum $ map countCanonicalCases funcs)
-    (sum $ map countImpossibleCases funcs)
-    (sum $ map countNotCoveredCases funcs)
+    (sum $ map countExcludedCases funcs)
+    (sum $ map countBugCases funcs)
+    (sum $ map countOptimizerArtifacts funcs)
+    (sum $ map countUnknownCases funcs)
     (length $ filter hasAnyCrash funcs)
 
 ||| Convert CompiledFunction to SemanticCoverage
@@ -353,7 +401,7 @@ toSemanticCoverage f =
   MkSemanticCoverage
     f.fullName
     (length $ filter (\c => c.kind == Canonical) f.cases)
-    (length $ filter isImpossibleCase f.cases)
+    (length $ filter isExcludedCase f.cases)
     0  -- executedCanonical comes from runtime profiler
 
 -- =============================================================================
@@ -457,5 +505,5 @@ semanticCoverageWithHits funcs lineHits =
   in MkSemanticCoverage
        "project"
        analysis.totalCanonical
-       analysis.totalImpossible
+       analysis.totalExcluded
        executed
