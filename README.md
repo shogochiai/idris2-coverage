@@ -11,11 +11,24 @@ to distinguish:
 - type-proven unreachable cases (absurd patterns), and
 - genuine coverage gaps.
 
-**Important:**  
+**Important:**
 Using `--dumpcases` is a working assumption, not a claim that it is the
 ideal or intended interface for semantic coverage.
 Part of the motivation of this project is to understand *where* such
 semantic distinctions should properly live in the Idris2 pipeline.
+
+### CRASH Classification (dunham's classification)
+
+Based on feedback from the Idris2 community (dunham), the library classifies CRASH messages into four categories:
+
+| CRASH Message | Classification | Semantics | Action |
+|--------------|----------------|-----------|--------|
+| `"No clauses in..."` | `CrashNoClauses` | Void/absurd pattern | **Exclude** from denominator |
+| `"Unhandled input for..."` | `CrashUnhandledInput` | Partial code bug | **Bug** - fix implementation |
+| `"Nat case not covered"` | `CrashOptimizerNat` | Optimizer artifact | **Non-semantic** - warn only |
+| Other messages | `CrashUnknown` | Unknown | **Never exclude** (conservative) |
+
+**Design principle**: Unknown CRASHes are never excluded from the denominator. This conservative approach ensures genuine bugs are not accidentally hidden.
 
 
 ## Theoretical Foundation
@@ -36,8 +49,10 @@ main = do
     | Left err => putStrLn $ "Error: " ++ err
 
   putStrLn $ "Canonical cases: " ++ show analysis.totalCanonical
-  putStrLn $ "Impossible (excluded): " ++ show analysis.totalImpossible
-  putStrLn $ "Not-covered (bugs): " ++ show analysis.totalNotCovered
+  putStrLn $ "Excluded (void etc): " ++ show analysis.totalExcluded
+  putStrLn $ "Bugs (partial code): " ++ show analysis.totalBugs
+  putStrLn $ "Optimizer artifacts: " ++ show analysis.totalOptimizerArtifacts
+  putStrLn $ "Unknown CRASHes: " ++ show analysis.totalUnknown
 ```
 
 ## Architecture
@@ -69,12 +84,12 @@ Coverage = executed_canonical / total_canonical
 ### CaseKind Classification
 
 ```idris
--- From Coverage.Types
+-- From Coverage.DumpcasesParser
 data CrashReason
-  = CrashImpossible    -- "Impossible case encountered" → exclude from denominator
-  | CrashNotCovered    -- "case not covered" → bug, keep in denominator
-  | CrashNoClauses     -- "No clauses in..." → exclude from denominator
-  | CrashOther String  -- Unknown → keep in denominator
+  = CrashNoClauses        -- "No clauses in..." → exclude (void/absurd)
+  | CrashUnhandledInput   -- "Unhandled input for..." → bug (partial code)
+  | CrashOptimizerNat     -- "Nat case not covered" → non-semantic (optimizer artifact)
+  | CrashUnknown String   -- Other → never exclude (conservative)
 
 data CaseKind
   = Canonical                    -- Reachable, should be tested
@@ -165,14 +180,16 @@ record SemanticCoverage where
   totalImpossible   : Nat    -- Excluded from denominator
   executedCanonical : Nat    -- Numerator (from runtime)
 
--- Project-level analysis
+-- Project-level analysis (dunham's classification)
 record SemanticAnalysis where
   constructor MkSemanticAnalysis
-  totalFunctions      : Nat
-  totalCanonical      : Nat
-  totalImpossible     : Nat
-  totalNotCovered     : Nat    -- Bugs
-  functionsWithCrash  : Nat
+  totalFunctions         : Nat
+  totalCanonical         : Nat
+  totalExcluded          : Nat    -- CrashNoClauses (void/absurd)
+  totalBugs              : Nat    -- CrashUnhandledInput (partial code)
+  totalOptimizerArtifacts: Nat    -- CrashOptimizerNat (non-semantic)
+  totalUnknown           : Nat    -- CrashUnknown (never exclude)
+  functionsWithCrash     : Nat
 ```
 
 ## Output Formats
@@ -184,8 +201,10 @@ record SemanticAnalysis where
   "analysis": {
     "total_functions": 42,
     "total_canonical": 156,
-    "total_impossible": 23,
-    "total_not_covered": 2,
+    "total_excluded": 23,
+    "total_bugs": 2,
+    "total_optimizer_artifacts": 1,
+    "total_unknown": 0,
     "functions_with_crash": 5
   },
   "functions": [
@@ -215,14 +234,16 @@ record SemanticAnalysis where
 Project Summary:
   Functions analyzed: 42
   Canonical cases: 156
-  Impossible cases (excluded): 23
-  Not-covered cases (bugs): 2
+  Excluded (void/absurd): 23
+  Bugs (partial code): 2
+  Optimizer artifacts: 1
+  Unknown CRASHes: 0
   Functions with CRASH: 5
 
 Per-function:
-  Main.safeHead: 1/1 (100%) [impossible: 1]
-  Parser.parseExpr: 6/8 (75%) [impossible: 0]
-  Validator.check: 0/3 (0%) [impossible: 2]
+  Main.safeHead: 1/1 (100%) [excluded: 1]
+  Parser.parseExpr: 6/8 (75%) [bugs: 0]
+  Validator.check: 0/3 (0%) [excluded: 2]
 ```
 
 ## Requirements
