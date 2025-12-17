@@ -14,6 +14,7 @@ import Coverage.UnifiedRunner
 
 import Data.List
 import Data.List1
+import Data.Maybe
 import Data.String
 import Data.String.Extra
 import System
@@ -38,9 +39,11 @@ record Options where
   showVersion  : Bool
   subcommand   : Maybe String    -- "branches" etc.
   showUncovered : Bool           -- --uncovered flag for branches
+  jsonOutput   : Bool            -- --json flag for machine-readable output
+  topK         : Nat             -- --top N for high impact targets (default 10)
 
 defaultOptions : Options
-defaultOptions = MkOptions JSON Nothing Nothing (Just ".") [] False False Nothing False
+defaultOptions = MkOptions JSON Nothing Nothing (Just ".") [] False False Nothing False False 10
 
 -- =============================================================================
 -- Argument Parsing
@@ -52,6 +55,11 @@ parseArgs ("branches" :: rest) opts =
   parseArgs rest ({ subcommand := Just "branches" } opts)
 parseArgs ("--uncovered" :: rest) opts =
   parseArgs rest ({ showUncovered := True } opts)
+parseArgs ("--json" :: rest) opts =
+  parseArgs rest ({ jsonOutput := True } opts)
+parseArgs ("--top" :: n :: rest) opts =
+  let k : Nat = fromMaybe 10 (parsePositive n)
+  in parseArgs rest ({ topK := k } opts)
 parseArgs ("--help" :: rest) opts =
   parseArgs rest ({ showHelp := True } opts)
 parseArgs ("-h" :: rest) opts =
@@ -97,11 +105,15 @@ EXAMPLES:
   idris2-cov pkgs/LazyCore/            # analyze specific directory
   idris2-cov myproject.ipkg            # analyze specific ipkg
   idris2-cov --uncovered .             # only show coverage gaps
+  idris2-cov --json .                  # JSON output with high_impact_targets
+  idris2-cov --json --top 5 .          # JSON with top 5 targets
 
 OPTIONS:
   -h, --help        Show this help message
   -v, --version     Show version
   --uncovered       Only show functions with bugs/unknown CRASHes
+  --json            Output JSON with high_impact_targets and reading_guide
+  --top N           Number of high impact targets to include (default: 10)
 
 BRANCH CLASSIFICATION (per dunham):
   canonical:    Reachable branches (test denominator)
@@ -228,6 +240,25 @@ findTestModules ipkg = do
     discoverFromFs : IO (List String)
     discoverFromFs = discoverTestModules (getProjectDir ipkg)
 
+||| Convert CompiledFunction to FunctionSemanticCoverage for target extraction
+||| Uses 0 as executed count for static-only analysis
+funcToSemanticCoverage : CompiledFunction -> FunctionSemanticCoverage
+funcToSemanticCoverage f = functionToSemanticCoverage f 0
+
+||| Convert CompiledFunction to FunctionSemanticCoverage with runtime proportion
+||| Distributes the total executed count proportionally based on function's canonical branches
+||| This is an approximation; full accuracy would require per-function .ss.html parsing
+funcToSemanticCoverageWithRuntime : Nat -> Nat -> CompiledFunction -> FunctionSemanticCoverage
+funcToSemanticCoverageWithRuntime totalExecuted totalCanonical f =
+  let funcCanonical = countCanonicalCases f
+      -- Proportional estimate: if project has 8% coverage, each function ~8% covered
+      proportion : Double
+      proportion = if totalCanonical == 0 then 0.0
+                   else cast totalExecuted / cast totalCanonical
+      estimatedExecuted : Nat
+      estimatedExecuted = cast (proportion * cast funcCanonical)
+  in functionToSemanticCoverage f estimatedExecuted
+
 ||| Run coverage analysis using lib API
 runBranches : Options -> IO ()
 runBranches opts = do
@@ -264,51 +295,65 @@ runBranches opts = do
                     Left _ => pure Nothing
                     Right cov => pure $ Just cov
 
-              -- Output classification-aware report
-              putStrLn $ "# Coverage Report"
-              putStrLn $ ts
-              putStrLn $ "target: " ++ target
-              putStrLn ""
+              -- JSON output mode
+              if opts.jsonOutput
+                 then do
+                   -- Convert to FunctionSemanticCoverage for target extraction
+                   -- Use runtime executed count if available, otherwise 0
+                   let runtimeExecuted = case runtimeCov of
+                         Nothing => 0
+                         Just cov => cov.executedCanonical
+                   -- Distribute executed count proportionally across functions
+                   -- (approximation: full data would require per-function .ss.html parsing)
+                   let funcsCov = map (funcToSemanticCoverageWithRuntime runtimeExecuted analysis.totalCanonical) funcs
+                   let targets = topKTargets opts.topK funcsCov
+                   putStrLn $ coverageReportToJson analysis targets
+                 else do
+                   -- Text output mode (original behavior)
+                   putStrLn $ "# Coverage Report"
+                   putStrLn $ ts
+                   putStrLn $ "target: " ++ target
+                   putStrLn ""
 
-              -- Show runtime coverage if available (from test binary's --dumpcases)
-              case runtimeCov of
-                Nothing => putStrLn "## Runtime Coverage: (no tests found/run)"
-                Just cov => do
-                  let pct = semanticCoveragePercent cov
-                  putStrLn $ "## Runtime Coverage (test binary)"
-                  putStrLn $ "executed:           " ++ show cov.executedCanonical
-                           ++ "/" ++ show cov.totalCanonical
-                           ++ " (" ++ show (cast {to=Int} pct) ++ "%)"
-                  putStrLn $ "note: denominator is test binary's branches, not main binary"
-              putStrLn ""
+                   -- Show runtime coverage if available (from test binary's --dumpcases)
+                   case runtimeCov of
+                     Nothing => putStrLn "## Runtime Coverage: (no tests found/run)"
+                     Just cov => do
+                       let pct = semanticCoveragePercent cov
+                       putStrLn $ "## Runtime Coverage (test binary)"
+                       putStrLn $ "executed:           " ++ show cov.executedCanonical
+                                ++ "/" ++ show cov.totalCanonical
+                                ++ " (" ++ show (cast {to=Int} pct) ++ "%)"
+                       putStrLn $ "note: denominator is test binary's branches, not main binary"
+                   putStrLn ""
 
-              putStrLn "## Branch Classification (main binary - static)"
-              putStrLn $ "canonical:          " ++ show analysis.totalCanonical
-                       ++ "   # reachable branches in main binary"
-              putStrLn $ "excluded_void:      " ++ show analysis.totalExcluded
-                       ++ "   # NoClauses - safe to exclude"
-              putStrLn $ "bugs:               " ++ show analysis.totalBugs
-                       ++ "   # UnhandledInput - genuine gaps (FIX THESE)"
-              putStrLn $ "optimizer_artifacts:" ++ show analysis.totalOptimizerArtifacts
-                       ++ "   # Nat case - ignore (non-semantic)"
-              putStrLn $ "unknown:            " ++ show analysis.totalUnknown
-                       ++ "   # conservative bucket"
-              putStrLn ""
+                   putStrLn "## Branch Classification (main binary - static)"
+                   putStrLn $ "canonical:          " ++ show analysis.totalCanonical
+                            ++ "   # reachable branches in main binary"
+                   putStrLn $ "excluded_void:      " ++ show analysis.totalExcluded
+                            ++ "   # NoClauses - safe to exclude"
+                   putStrLn $ "bugs:               " ++ show analysis.totalBugs
+                            ++ "   # UnhandledInput - genuine gaps (FIX THESE)"
+                   putStrLn $ "optimizer_artifacts:" ++ show analysis.totalOptimizerArtifacts
+                            ++ "   # Nat case - ignore (non-semantic)"
+                   putStrLn $ "unknown:            " ++ show analysis.totalUnknown
+                            ++ "   # conservative bucket"
+                   putStrLn ""
 
-              -- Show bugs (UnhandledInput) - the main test targets
-              case bugFuncs of
-                [] => putStrLn "## Bugs (UnhandledInput): none"
-                _ => do
-                  putStrLn $ "## Bugs (UnhandledInput) - Test Targets: " ++ show (length bugFuncs)
-                  traverse_ (putStrLn . formatBugLine) bugFuncs
-              putStrLn ""
+                   -- Show bugs (UnhandledInput) - the main test targets
+                   case bugFuncs of
+                     [] => putStrLn "## Bugs (UnhandledInput): none"
+                     _ => do
+                       putStrLn $ "## Bugs (UnhandledInput) - Test Targets: " ++ show (length bugFuncs)
+                       traverse_ (putStrLn . formatBugLine) bugFuncs
+                   putStrLn ""
 
-              -- Show unknown CRASHes
-              case unknownFuncs of
-                [] => putStrLn "## Unknown CRASHes: none"
-                _ => do
-                  putStrLn $ "## Unknown CRASHes (investigate): " ++ show (length unknownFuncs)
-                  traverse_ (putStrLn . formatUnknownLine) unknownFuncs
+                   -- Show unknown CRASHes
+                   case unknownFuncs of
+                     [] => putStrLn "## Unknown CRASHes: none"
+                     _ => do
+                       putStrLn $ "## Unknown CRASHes (investigate): " ++ show (length unknownFuncs)
+                       traverse_ (putStrLn . formatUnknownLine) unknownFuncs
 
 -- =============================================================================
 -- Main

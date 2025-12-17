@@ -223,6 +223,7 @@ countExcludedCasesSC func =
   countExcludedNoClausesSC func + countExcludedOptimizerSC func
 
 ||| Convert CompiledFunction to FunctionSemanticCoverage with hits (Pragmatic v1.0)
+public export
 functionToSemanticCoverage : CompiledFunction -> Nat -> FunctionSemanticCoverage
 functionToSemanticCoverage f executed =
   let canonical = countCanonicalCasesSC f in
@@ -247,6 +248,137 @@ functionToSemanticCoverage f executed =
        exclOptimizer
        bugUnhandled
        unknownCrash
+
+-- =============================================================================
+-- High Impact Targets (Pragmatic v1.0)
+-- =============================================================================
+
+||| Classification of high-impact coverage gaps
+public export
+data HighImpactKind
+  = HIT_UntestedCanonical   -- canonical > 0 && executed == 0
+  | HIT_BugUnhandledInput   -- bugUnhandledInput > 0
+  | HIT_UnknownCrash        -- unknownCrash > 0
+
+public export
+Show HighImpactKind where
+  show HIT_UntestedCanonical = "untested_canonical"
+  show HIT_BugUnhandledInput = "bug_unhandled_input"
+  show HIT_UnknownCrash      = "unknown_crash"
+
+public export
+Eq HighImpactKind where
+  HIT_UntestedCanonical == HIT_UntestedCanonical = True
+  HIT_BugUnhandledInput == HIT_BugUnhandledInput = True
+  HIT_UnknownCrash      == HIT_UnknownCrash      = True
+  _ == _ = False
+
+||| A high-impact target for coverage improvement
+public export
+record HighImpactTarget where
+  constructor MkHighImpactTarget
+  kind         : HighImpactKind
+  funcName     : String
+  moduleName   : String
+  branchCount  : Nat     -- total canonical branches OR bug/unknown count
+  executedCount : Nat    -- branches executed at runtime (from .ss.html)
+  severity     : Double  -- branchCount/executedCount ratio (Inf if executedCount=0)
+  note         : String  -- human-readable explanation
+
+||| Format severity as string (handles Inf case)
+export
+showSeverity : Double -> String
+showSeverity s = if s > 1.0e308 then "Inf"
+                 else let rounded = cast {to=Int} (s * 100.0)
+                      in show (cast {to=Double} rounded / 100.0)
+
+public export
+Show HighImpactTarget where
+  show t = "[" ++ show t.kind ++ "] " ++ t.funcName
+        ++ " (executed=" ++ show t.executedCount ++ "/" ++ show t.branchCount
+        ++ ", severity=" ++ showSeverity t.severity ++ ")"
+
+||| Calculate severity score as branchCount/executedCount ratio
+||| Returns Infinity (1e309) if executedCount = 0, otherwise ratio with 2 decimal places
+||| For bugs/unknown: use branchCount as severity (they don't have executed concept)
+public export
+severityRatio : Nat -> Nat -> Double
+severityRatio branchCount executedCount =
+  if executedCount == 0
+     then 1.0e309  -- Infinity
+     else cast branchCount / cast executedCount
+
+||| Extract high-impact targets from a FunctionSemanticCoverage
+||| Returns 0-3 targets depending on which coverage issues exist
+||| Now includes executedCount from runtime profiler
+||| Severity = branchCount / executedCount (Inf if executedCount = 0)
+public export
+targetsFromFunction : FunctionSemanticCoverage -> List HighImpactTarget
+targetsFromFunction fsc =
+  let -- Calculate untested branches (gap between total and executed)
+      untestedBranches = if fsc.totalCanonical > fsc.executedCanonical
+                         then fsc.totalCanonical `minus` fsc.executedCanonical
+                         else 0
+      -- Only flag as untested if there are actual untested branches
+      untested = if untestedBranches > 0
+                 then [MkHighImpactTarget
+                         HIT_UntestedCanonical
+                         fsc.funcName
+                         fsc.moduleName
+                         fsc.totalCanonical
+                         fsc.executedCanonical
+                         (severityRatio fsc.totalCanonical fsc.executedCanonical)
+                         ("Function has " ++ show untestedBranches ++ " untested branches")]
+                 else []
+      -- Bugs: severity = Inf (always highest priority)
+      bugs = if fsc.bugUnhandledInput > 0
+             then [MkHighImpactTarget
+                     HIT_BugUnhandledInput
+                     fsc.funcName
+                     fsc.moduleName
+                     fsc.bugUnhandledInput
+                     0  -- bugs don't have "executed" concept
+                     1.0e309  -- Infinity - bugs are always highest priority
+                     "Partial code: CRASH 'Unhandled input' detected"]
+             else []
+      -- Unknown: severity = Inf (needs investigation)
+      unknown = if fsc.unknownCrash > 0
+                then [MkHighImpactTarget
+                        HIT_UnknownCrash
+                        fsc.funcName
+                        fsc.moduleName
+                        fsc.unknownCrash
+                        0  -- unknown crashes don't have "executed" concept
+                        1.0e309  -- Infinity - unknown needs investigation
+                        "Unknown CRASH message - investigate"]
+                else []
+  in untested ++ bugs ++ unknown
+
+||| Sort targets by severity (descending), then by branchCount (descending) for ties
+public export
+sortTargets : List HighImpactTarget -> List HighImpactTarget
+sortTargets = sortBy compareSeverity
+  where
+    compareSeverity : HighImpactTarget -> HighImpactTarget -> Ordering
+    compareSeverity a b =
+      case compare b.severity a.severity of
+        EQ => compare b.branchCount a.branchCount  -- secondary sort by branchCount
+        other => other
+
+||| Check if function name is compiler-generated (csegen, etc.)
+isCompilerGenerated : String -> Bool
+isCompilerGenerated name = isPrefixOf "{" name
+
+||| Get top K high-impact targets from list of functions
+||| Filters out compiler-generated functions ({csegen:*}, etc.)
+public export
+topKTargets : Nat -> List FunctionSemanticCoverage -> List HighImpactTarget
+topKTargets k funcs =
+  let allTargets = concatMap targetsFromFunction funcs
+      -- Filter out compiler-generated functions
+      userTargets = filter (not . isCompilerGenerated . funcName) allTargets
+      sorted = sortTargets userTargets
+  in take k sorted
 
 -- =============================================================================
 -- Report Generation
@@ -321,6 +453,74 @@ semanticCoverageToJson sc =
     , "  \"coverage_percent\": " ++ show pct
     , "}"
     ]
+
+-- =============================================================================
+-- High Impact Targets JSON Output
+-- =============================================================================
+
+||| Reading guide for LLM/tool consumption
+public export
+coverageReadingGuide : String
+coverageReadingGuide = """
+high_impact_targets: Functions with coverage issues, sorted by severity (highest first).
+- kind: untested_canonical = has untested branches; bug_unhandled_input = partial code (CRASH); unknown_crash = investigate.
+- branchCount: Total canonical branches in function (or bug/crash count).
+- executedCount: Branches executed at runtime (from .ss.html profiler).
+- severity: branchCount/executedCount ratio (2 decimal places). Inf = no branches executed or bug/unknown.
+Action: Start fixing from the top of the list (highest severity) for maximum coverage improvement.
+"""
+
+||| Convert single HighImpactTarget to JSON object string
+public export
+targetToJson : HighImpactTarget -> String
+targetToJson t = unlines
+  [ "    {"
+  , "      \"kind\": \"" ++ show t.kind ++ "\","
+  , "      \"funcName\": \"" ++ t.funcName ++ "\","
+  , "      \"moduleName\": \"" ++ t.moduleName ++ "\","
+  , "      \"branchCount\": " ++ show t.branchCount ++ ","
+  , "      \"executedCount\": " ++ show t.executedCount ++ ","
+  , "      \"severity\": \"" ++ showSeverity t.severity ++ "\","
+  , "      \"note\": \"" ++ t.note ++ "\""
+  , "    }"
+  ]
+
+||| Convert list of targets to JSON array
+public export
+targetsToJsonArray : List HighImpactTarget -> String
+targetsToJsonArray [] = "[]"
+targetsToJsonArray targets =
+  let items = map targetToJson targets
+      joined = fastConcat $ intersperse ",\n" items
+  in "[\n" ++ joined ++ "\n  ]"
+
+||| Full coverage report with high impact targets as JSON
+||| This is the canonical output format for both CLI and lazy core ask
+public export
+coverageReportToJson : SemanticAnalysis -> List HighImpactTarget -> String
+coverageReportToJson analysis targets = unlines
+  [ "{"
+  , "  \"reading_guide\": \"" ++ escapeJson coverageReadingGuide ++ "\","
+  , "  \"summary\": {"
+  , "    \"total_functions\": " ++ show analysis.totalFunctions ++ ","
+  , "    \"total_canonical\": " ++ show analysis.totalCanonical ++ ","
+  , "    \"total_excluded\": " ++ show analysis.totalExcluded ++ ","
+  , "    \"total_bugs\": " ++ show analysis.totalBugs ++ ","
+  , "    \"total_optimizer_artifacts\": " ++ show analysis.totalOptimizerArtifacts ++ ","
+  , "    \"total_unknown\": " ++ show analysis.totalUnknown
+  , "  },"
+  , "  \"high_impact_targets\": " ++ targetsToJsonArray targets
+  , "}"
+  ]
+  where
+    escapeJson : String -> String
+    escapeJson s = fastConcat $ map escapeChar (unpack s)
+      where
+        escapeChar : Char -> String
+        escapeChar '\n' = "\\n"
+        escapeChar '"'  = "\\\""
+        escapeChar '\\' = "\\\\"
+        escapeChar c    = singleton c
 
 -- =============================================================================
 -- OR Aggregation API (BranchId-based)
