@@ -365,9 +365,14 @@ sortTargets = sortBy compareSeverity
         EQ => compare b.branchCount a.branchCount  -- secondary sort by branchCount
         other => other
 
-||| Check if function name is compiler-generated (csegen, etc.)
+||| Check if function name is compiler-generated
+||| Patterns: {csegen:N}, {eta:N}, _builtin.*, prim__*
+||| See docs/compiler-generated-functions.md for full reference
 isCompilerGenerated : String -> Bool
-isCompilerGenerated name = isPrefixOf "{" name
+isCompilerGenerated name =
+     isPrefixOf "{" name          -- MN names: {csegen:N}, {eta:N}, etc.
+  || isPrefixOf "_builtin." name  -- Builtin constructors
+  || isPrefixOf "prim__" name     -- Primitive operations
 
 ||| Get top K high-impact targets from list of functions
 ||| Filters out compiler-generated functions ({csegen:*}, etc.)
