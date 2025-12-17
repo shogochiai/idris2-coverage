@@ -139,13 +139,17 @@ findIpkgInDir dir = do
 ||| Resolve target path to ipkg path
 resolveIpkg : String -> IO (Either String String)
 resolveIpkg target = do
-  if isSuffixOf ".ipkg" target
-     then pure $ Right target
+  -- Remove trailing slash if present
+  let cleanTarget = if isSuffixOf "/" target
+                       then pack $ reverse $ drop 1 $ reverse $ unpack target
+                       else target
+  if isSuffixOf ".ipkg" cleanTarget
+     then pure $ Right cleanTarget
      else do
        -- Assume it's a directory, look for .ipkg
-       result <- findIpkgInDir target
+       result <- findIpkgInDir cleanTarget
        case result of
-         Nothing => pure $ Left $ "No .ipkg file found in " ++ target
+         Nothing => pure $ Left $ "No .ipkg file found in " ++ cleanTarget
          Just ipkg => pure $ Right ipkg
 
 ||| Get current timestamp as ISO-ish string
@@ -163,21 +167,51 @@ formatBugLine f = "- " ++ f.fullName ++ ": UnhandledInput"
 formatUnknownLine : CompiledFunction -> String
 formatUnknownLine f = "- " ++ f.fullName ++ ": Unknown CRASH"
 
-||| Find test modules in ipkg (modules with 'Test' in name)
-||| Simple heuristic: split on whitespace/comma, filter for "Test"
+||| Parse ipkg modules field (handles multi-line format)
+||| Format: modules = Foo, Bar
+|||                 , Baz.Qux
+|||                 , Tests.AllTests
+parseIpkgModules : String -> List String
+parseIpkgModules content =
+  let ls = lines content
+      -- Find "modules = ..." and collect continuation lines
+      moduleLines = collectModuleLines ls False
+      -- Join and split on comma
+      joined = fastConcat $ intersperse " " moduleLines
+      -- Remove "modules" and "="
+      afterEq = case break (== '=') (unpack joined) of
+                  (_, rest) => pack $ drop 1 rest
+      -- Split on comma and clean up
+      parts = forget $ split (== ',') afterEq
+  in map (trim . pack . filter isModuleChar . unpack . trim) parts
+  where
+    isModuleChar : Char -> Bool
+    isModuleChar c = isAlphaNum c || c == '.' || c == '_'
+
+    -- Collect lines that are part of modules declaration
+    collectModuleLines : List String -> Bool -> List String
+    collectModuleLines [] _ = []
+    collectModuleLines (l :: ls) False =
+      if isInfixOf "modules" l && isInfixOf "=" l
+         then l :: collectModuleLines ls True
+         else collectModuleLines ls False
+    collectModuleLines (l :: ls) True =
+      let trimmed = trim l
+      in if null trimmed
+            then collectModuleLines ls True  -- skip empty
+            else if isPrefixOf "," trimmed || isPrefixOf " " l || isPrefixOf "\t" l
+                    then l :: collectModuleLines ls True
+                    else []  -- hit next field, stop
+
+||| Find test modules in ipkg (only *.AllTests modules)
 findTestModules : String -> IO (List String)
 findTestModules ipkg = do
   Right content <- readFile ipkg
     | Left _ => pure []
-  -- Split content into words, filter for module-like names with "Test"
-  let words = filter (not . null) $ map trim $ forget $ split isDelim content
-  pure $ filter isTestModule words
-  where
-    isDelim : Char -> Bool
-    isDelim c = c == ',' || c == ' ' || c == '\n' || c == '\t'
-
-    isTestModule : String -> Bool
-    isTestModule m = isInfixOf "Test" m && length m > 4 && not (isInfixOf "=" m)
+  let allModules = parseIpkgModules content
+  -- Only modules ending with "AllTests" have runAllTests
+  let testMods = filter (isSuffixOf "AllTests") allModules
+  pure testMods
 
 ||| Run coverage analysis using lib API
 runBranches : Options -> IO ()
