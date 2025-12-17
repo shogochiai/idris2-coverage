@@ -40,7 +40,7 @@ record Options where
   showUncovered : Bool           -- --uncovered flag for branches
 
 defaultOptions : Options
-defaultOptions = MkOptions JSON Nothing Nothing Nothing [] False False Nothing False
+defaultOptions = MkOptions JSON Nothing Nothing (Just ".") [] False False Nothing False
 
 -- =============================================================================
 -- Argument Parsing
@@ -87,15 +87,16 @@ helpText = """
 idris2-coverage - Classification-aware semantic coverage for Idris2
 
 USAGE:
-  idris2-cov branches [--uncovered] <dir>   Static branch analysis
-  idris2-cov branches [--uncovered] <ipkg>  Static branch analysis
+  idris2-cov [options] [<dir-or-ipkg>]
+
+  Target defaults to current directory if not specified.
 
 EXAMPLES:
-  # Analyze directory (finds .ipkg automatically)
-  idris2-cov branches pkgs/LazyCore/
-
-  # Show only functions with coverage gaps
-  idris2-cov branches --uncovered pkgs/LazyCore/
+  idris2-cov                           # analyze current directory
+  idris2-cov .                         # same as above
+  idris2-cov pkgs/LazyCore/            # analyze specific directory
+  idris2-cov myproject.ipkg            # analyze specific ipkg
+  idris2-cov --uncovered .             # only show coverage gaps
 
 OPTIONS:
   -h, --help        Show this help message
@@ -203,15 +204,29 @@ parseIpkgModules content =
                     then l :: collectModuleLines ls True
                     else []  -- hit next field, stop
 
-||| Find test modules in ipkg (only *.AllTests modules)
+||| Extract project directory from ipkg path
+getProjectDir : String -> String
+getProjectDir ipkg =
+  let parts = forget $ split (== '/') ipkg
+      allButLast = reverse $ drop 1 $ reverse parts
+  in case allButLast of
+       [] => "."
+       dirs => joinBy "/" dirs
+
+||| Find test modules - ipkg first, then filesystem discovery
 findTestModules : String -> IO (List String)
 findTestModules ipkg = do
+  -- Try ipkg-based discovery first
   Right content <- readFile ipkg
-    | Left _ => pure []
+    | Left _ => discoverFromFs
   let allModules = parseIpkgModules content
-  -- Only modules ending with "AllTests" have runAllTests
   let testMods = filter (isSuffixOf "AllTests") allModules
-  pure testMods
+  case testMods of
+    [] => discoverFromFs  -- Fallback to filesystem
+    mods => pure mods
+  where
+    discoverFromFs : IO (List String)
+    discoverFromFs = discoverTestModules (getProjectDir ipkg)
 
 ||| Run coverage analysis using lib API
 runBranches : Options -> IO ()

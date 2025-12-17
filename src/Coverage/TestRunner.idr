@@ -10,6 +10,7 @@ import Data.String
 import System
 import System.File
 import System.Directory
+import System.Clock
 
 %default total
 
@@ -136,12 +137,48 @@ runAllTests testFiles workDir =
 -- =============================================================================
 
 ||| List test files in a directory matching pattern
-||| Note: This is a simplified implementation
+||| Finds *AllTests.idr files in */Tests/* directories
 export
 covering
 findTestFiles : (baseDir : String) -> (pattern : String) -> IO (List String)
 findTestFiles baseDir pattern = do
-  -- Use shell find command for simplicity
-  let cmd = "find \{baseDir} -name '*.idr' -path '*/Tests/*' 2>/dev/null"
-  -- This is simplified - in real impl would parse output
-  pure []  -- Placeholder - real implementation needs shell execution
+  t <- clockTime UTC
+  let uid = show (seconds t)
+  let tmpFile = "/tmp/idris2_find_tests_" ++ uid ++ ".txt"
+  let cmd = "find " ++ baseDir ++ " -name '*AllTests.idr' -path '*/Tests/*' > " ++ tmpFile ++ " 2>/dev/null"
+  _ <- system cmd
+  Right content <- readFile tmpFile
+    | Left _ => pure []
+  _ <- removeFile tmpFile
+  let files = filter (not . null) $ map trim $ lines content
+  pure files
+
+||| Convert file path to module name
+||| e.g., "src/Coverage/Tests/AllTests.idr" -> "Coverage.Tests.AllTests"
+||| Strips common source directories (src/, lib/) and .idr extension
+export
+filePathToModule : String -> String
+filePathToModule path =
+  let noExt = if isSuffixOf ".idr" path
+                 then pack $ reverse $ drop 4 $ reverse $ unpack path
+                 else path
+      parts = forget $ split (== '/') noExt
+      -- Skip common source directories
+      stripped = dropSourceDirs parts
+  in joinBy "." stripped
+  where
+    dropSourceDirs : List String -> List String
+    dropSourceDirs [] = []
+    dropSourceDirs (x :: xs) =
+      if x == "src" || x == "lib" || x == "." || x == ""
+         then dropSourceDirs xs
+         else x :: xs
+
+||| Discover test modules from filesystem
+||| Returns module names like "Coverage.Tests.AllTests"
+export
+covering
+discoverTestModules : String -> IO (List String)
+discoverTestModules baseDir = do
+  files <- findTestFiles baseDir "*AllTests.idr"
+  pure $ map filePathToModule files

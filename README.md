@@ -2,6 +2,8 @@
 
 **Semantic coverage library** for Idris2. Uses `--dumpcases` output to measure canonical case coverage with type-awareness.
 
+**Self-coverage**: 220/901 branches (24%) - measured by running `idris2-cov .`
+
 ## Status / Scope
 
 This project is an experimental exploration of *semantic coverage* for Idris2.
