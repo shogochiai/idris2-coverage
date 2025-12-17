@@ -19,6 +19,7 @@ import Data.String.Extra
 import System
 import System.File
 import System.Directory
+import System.Clock
 
 %default covering
 
@@ -31,7 +32,7 @@ record Options where
   format       : OutputFormat
   outputPath   : Maybe String
   runTests     : Maybe String    -- glob pattern for tests
-  ipkgPath     : Maybe String
+  targetPath   : Maybe String    -- directory or ipkg path
   sourceFiles  : List String
   showHelp     : Bool
   showVersion  : Bool
@@ -72,11 +73,10 @@ parseArgs ("-o" :: path :: rest) opts =
 parseArgs ("--run-tests" :: pattern :: rest) opts =
   parseArgs rest ({ runTests := Just pattern } opts)
 parseArgs (arg :: rest) opts =
-  if isSuffixOf ".ipkg" arg
-     then parseArgs rest ({ ipkgPath := Just arg } opts)
-     else if isSuffixOf ".idr" arg
-             then parseArgs rest ({ sourceFiles $= (arg ::) } opts)
-             else parseArgs rest opts
+  -- Accept directory or ipkg as target
+  if isSuffixOf ".idr" arg
+     then parseArgs rest ({ sourceFiles $= (arg ::) } opts)
+     else parseArgs rest ({ targetPath := Just arg } opts)
 
 -- =============================================================================
 -- Help Text
@@ -84,31 +84,30 @@ parseArgs (arg :: rest) opts =
 
 helpText : String
 helpText = """
-idris2-coverage - Semantic coverage for Idris2 (absurd-pattern-omitting)
+idris2-coverage - Classification-aware semantic coverage for Idris2
 
 USAGE:
-  idris2-cov <ipkg>                        Run tests & show coverage
-  idris2-cov branches [--uncovered] <ipkg> Static branch analysis
+  idris2-cov branches [--uncovered] <dir>   Static branch analysis
+  idris2-cov branches [--uncovered] <ipkg>  Static branch analysis
 
 EXAMPLES:
-  # Run all tests, report semantic coverage
-  idris2-cov myproject.ipkg
+  # Analyze directory (finds .ipkg automatically)
+  idris2-cov branches pkgs/LazyCore/
 
-  # Static analysis only (no test execution)
-  idris2-cov branches myproject.ipkg
-  idris2-cov branches --uncovered myproject.ipkg
+  # Show only functions with coverage gaps
+  idris2-cov branches --uncovered pkgs/LazyCore/
 
 OPTIONS:
-  -h, --help      Show this help message
-  -v, --version   Show version
+  -h, --help        Show this help message
+  -v, --version     Show version
+  --uncovered       Only show functions with bugs/unknown CRASHes
 
-WHAT IT DOES:
-  1. Discovers test modules (modules with 'Test' in name)
-  2. Runs tests with Chez Scheme profiler
-  3. Analyzes --dumpcases output for canonical branches
-  4. Excludes absurd patterns (void, impossible cases)
-  5. Reports: covered/canonical branches per module
-  6. Shows uncovered branches as test targets
+BRANCH CLASSIFICATION (per dunham):
+  canonical:    Reachable branches (test denominator)
+  excluded:     NoClauses - void/uninhabited (safe to exclude)
+  bugs:         UnhandledInput - genuine coverage gaps (FIX THESE)
+  optimizer:    Nat case - non-semantic artifact (ignore)
+  unknown:      Other CRASHes - conservative bucket (investigate)
 """
 
 versionText : String
@@ -123,214 +122,96 @@ hasUncoveredBranches : CompiledFunction -> Bool
 hasUncoveredBranches f =
   countBugCases f > 0 || countUnknownCases f > 0
 
-||| Format a single function's branch info
-formatFunctionBranches : CompiledFunction -> String
-formatFunctionBranches f =
-  let canonical = countCanonicalCases f
-      bugs = countBugCases f
-      excluded = countExcludedCases f
-      optimizer = countOptimizerArtifacts f
-      unknown = countUnknownCases f
-      status = if bugs > 0 || unknown > 0 then "[UNCOVERED]" else "[OK]"
-  in status ++ " " ++ f.fullName ++ ": "
-     ++ show canonical ++ " canonical"
-     ++ (if bugs > 0 then ", " ++ show bugs ++ " bugs" else "")
-     ++ (if unknown > 0 then ", " ++ show unknown ++ " unknown" else "")
-     ++ (if excluded > 0 then ", " ++ show excluded ++ " excluded" else "")
-     ++ (if optimizer > 0 then ", " ++ show optimizer ++ " optimizer-artifacts" else "")
+||| Find .ipkg file in directory
+findIpkgInDir : String -> IO (Maybe String)
+findIpkgInDir dir = do
+  Right entries <- listDir dir
+    | Left _ => pure Nothing
+  let ipkgs = filter (isSuffixOf ".ipkg") entries
+  case ipkgs of
+    [] => pure Nothing
+    (x :: _) => pure $ Just (dir ++ "/" ++ x)
 
-||| Run branches subcommand
+||| Resolve target path to ipkg path
+resolveIpkg : String -> IO (Either String String)
+resolveIpkg target = do
+  if isSuffixOf ".ipkg" target
+     then pure $ Right target
+     else do
+       -- Assume it's a directory, look for .ipkg
+       result <- findIpkgInDir target
+       case result of
+         Nothing => pure $ Left $ "No .ipkg file found in " ++ target
+         Just ipkg => pure $ Right ipkg
+
+||| Get current timestamp as ISO-ish string
+getTimestamp : IO String
+getTimestamp = do
+  t <- clockTime UTC
+  let secs = seconds t
+  pure $ "timestamp:" ++ show secs
+
+||| Format bug function line for report
+formatBugLine : CompiledFunction -> String
+formatBugLine f = "- " ++ f.fullName ++ ": UnhandledInput"
+
+||| Format unknown function line for report
+formatUnknownLine : CompiledFunction -> String
+formatUnknownLine f = "- " ++ f.fullName ++ ": Unknown CRASH"
+
+||| Run branches subcommand with classification-aware report
 runBranches : Options -> IO ()
 runBranches opts = do
-  case opts.ipkgPath of
-    Nothing => putStrLn "Error: No .ipkg file specified"
-    Just ipkg => do
-      result <- analyzeProjectFunctions ipkg
-      case result of
+  case opts.targetPath of
+    Nothing => putStrLn "Error: No target specified\n\nUsage: idris2-cov branches <dir-or-ipkg>"
+    Just target => do
+      ipkgResult <- resolveIpkg target
+      case ipkgResult of
         Left err => putStrLn $ "Error: " ++ err
-        Right funcs => do
-          let filtered = if opts.showUncovered
-                         then filter hasUncoveredBranches funcs
-                         else funcs
-          let analysis = aggregateAnalysis funcs
+        Right ipkg => do
+          result <- analyzeProjectFunctions ipkg
+          case result of
+            Left err => putStrLn $ "Error: " ++ err
+            Right funcs => do
+              let analysis = aggregateAnalysis funcs
+              let bugFuncs = filter (\f => countBugCases f > 0) funcs
+              let unknownFuncs = filter (\f => countUnknownCases f > 0) funcs
 
-          -- Header
-          putStrLn "=== Branch Analysis ==="
-          putStrLn ""
+              -- Get timestamp
+              ts <- getTimestamp
 
-          -- Summary
-          putStrLn $ "Functions: " ++ show analysis.totalFunctions
-          putStrLn $ "Canonical branches: " ++ show analysis.totalCanonical
-          putStrLn $ "Uncovered (bugs): " ++ show analysis.totalBugs
-          putStrLn $ "Unknown CRASHes: " ++ show analysis.totalUnknown
-          putStrLn $ "Excluded (void): " ++ show analysis.totalExcluded
-          putStrLn $ "Optimizer artifacts: " ++ show analysis.totalOptimizerArtifacts
-          putStrLn ""
-
-          -- Function list
-          if opts.showUncovered
-             then putStrLn $ "Functions with uncovered branches (" ++ show (length filtered) ++ "):"
-             else putStrLn "All functions:"
-          putStrLn ""
-
-          traverse_ (putStrLn . formatFunctionBranches) filtered
-
--- =============================================================================
--- Main Coverage Command
--- =============================================================================
-
-||| Split ipkg path into directory and filename
-splitPath : String -> (String, String)
-splitPath path =
-  let parts = forget $ split (== '/') path
-  in case parts of
-       [] => (".", path)
-       [x] => (".", x)
-       _ => let revParts = reverse parts
-            in case revParts of
-                 [] => (".", path)
-                 (file :: dirs) => (fastConcat $ intersperse "/" (reverse dirs), file)
-
-||| Parse ipkg to extract test module names (modules containing "Test" or in Tests/)
-||| Returns list of module names that look like test modules
-parseTestModulesFromIpkg : String -> List String
-parseTestModulesFromIpkg content =
-  let ls = lines content
-      moduleLine = find (isInfixOf "modules") ls
-  in case moduleLine of
-       Nothing => []
-       Just line =>
-         let afterEq = snd $ break (== '=') (unpack line)
-             moduleStr = pack $ drop 1 afterEq  -- drop '='
-             modules = map trim $ forget $ split (== ',') moduleStr
-         in filter isTestModule modules
-  where
-    isTestModule : String -> Bool
-    isTestModule m = isInfixOf "Test" m || isInfixOf "Tests" m
-
-||| Group functions by module name
-groupByModule : List CompiledFunction -> List (String, List CompiledFunction)
-groupByModule funcs =
-  let modules = nub $ map (.moduleName) funcs
-  in map (\m => (m, filter (\f => f.moduleName == m) funcs)) modules
-
-||| Format module coverage line
-formatModuleLine : String -> Nat -> Nat -> String
-formatModuleLine modName covCount totCount =
-  let pct : Integer = if totCount == 0 then 100 else (cast covCount * 100) `div` cast totCount
-      padding = pack $ replicate (max 0 (30 `minus` length modName)) ' '
-  in "  " ++ modName ++ padding ++ show covCount ++ "/" ++ show totCount
-     ++ "  (" ++ show pct ++ "%)"
-
-||| Run main coverage analysis
-runCoverage : Options -> IO ()
-runCoverage opts = do
-  case opts.ipkgPath of
-    Nothing => putStrLn "Error: No .ipkg file specified\n\nUsage: idris2-cov <project.ipkg>"
-    Just ipkg => do
-      let (projectDir, ipkgName) = splitPath ipkg
-
-      putStrLn "=== Semantic Coverage ==="
-      putStrLn ""
-      putStrLn $ "Analyzing: " ++ ipkg
-      putStrLn ""
-
-      -- Step 1: Get canonical branches from dumpcases (static analysis)
-      putStrLn "Running static analysis (dumpcases)..."
-      staticResult <- analyzeProjectFunctions ipkg
-      case staticResult of
-        Left err => putStrLn $ "Error in static analysis: " ++ err
-        Right funcs => do
-          let analysis = aggregateAnalysis funcs
-
-          -- Step 2: Try to find and run tests
-          putStrLn "Looking for test modules..."
-          Right ipkgContent <- readFile ipkg
-            | Left _ => do
-                putStrLn "Warning: Could not read ipkg file"
-                showStaticOnly analysis funcs
-
-          let testModules = parseTestModulesFromIpkg ipkgContent
-
-          case testModules of
-            [] => do
-              putStrLn "No test modules found (modules with 'Test' in name)"
+              -- Classification-aware report format
+              putStrLn $ "# Coverage Report"
+              putStrLn $ ts
+              putStrLn $ "target: " ++ target
               putStrLn ""
-              showStaticOnly analysis funcs
-            mods => do
-              putStrLn $ "Found test modules: " ++ show mods
-              putStrLn "Running tests with profiler..."
+              putStrLn "## Branch Classification"
+              putStrLn $ "canonical:          " ++ show analysis.totalCanonical
+                       ++ "   # reachable branches (test denominator)"
+              putStrLn $ "excluded_void:      " ++ show analysis.totalExcluded
+                       ++ "   # NoClauses - safe to exclude"
+              putStrLn $ "bugs:               " ++ show analysis.totalBugs
+                       ++ "   # UnhandledInput - genuine gaps (FIX THESE)"
+              putStrLn $ "optimizer_artifacts:" ++ show analysis.totalOptimizerArtifacts
+                       ++ "   # Nat case - ignore (non-semantic)"
+              putStrLn $ "unknown:            " ++ show analysis.totalUnknown
+                       ++ "   # conservative bucket"
               putStrLn ""
 
-              -- Run tests and collect coverage
-              testResult <- runTestsWithCoverage projectDir mods 300
-              case testResult of
-                Left err => do
-                  putStrLn $ "Warning: Test run failed: " ++ err
-                  putStrLn "Showing static analysis only."
-                  putStrLn ""
-                  showStaticOnly analysis funcs
-                Right report => do
-                  showCoverageReport analysis funcs report
-  where
-    printModuleStatic : (String, List CompiledFunction) -> IO ()
-    printModuleStatic p =
-      let m = fst p
-          fs = snd p
-          tot = sum $ map countCanonicalCases fs
-      in putStrLn $ formatModuleLine m 0 tot
+              -- Show bugs (UnhandledInput) - the main test targets
+              case bugFuncs of
+                [] => putStrLn "## Bugs (UnhandledInput): none"
+                _ => do
+                  putStrLn $ "## Bugs (UnhandledInput) - Test Targets: " ++ show (length bugFuncs)
+                  traverse_ (putStrLn . formatBugLine) bugFuncs
+              putStrLn ""
 
-    showStaticOnly : SemanticAnalysis -> List CompiledFunction -> IO ()
-    showStaticOnly analysis funcs = do
-      putStrLn "Static Analysis (no runtime data):"
-      putStrLn $ "  Canonical branches: " ++ show analysis.totalCanonical
-      putStrLn $ "  Excluded (absurd):  " ++ show analysis.totalExcluded
-      putStrLn ""
-      putStrLn "By Module:"
-      let grouped = groupByModule funcs
-      traverse_ printModuleStatic grouped
-
-    printModuleCov : Nat -> Nat -> (String, List CompiledFunction) -> IO ()
-    printModuleCov cov tot p =
-      let m = fst p
-          fs = snd p
-          modTot = sum $ map countCanonicalCases fs
-          modCov : Nat = cast $ (cast modTot * cast cov) `div` cast (max 1 tot)
-      in putStrLn $ formatModuleLine m modCov modTot
-
-    printUncovered : (String, BranchPoint) -> IO ()
-    printUncovered p = putStrLn $ "  " ++ fst p ++ ": line " ++ show (snd p).line
-
-    showCoverageReport : SemanticAnalysis -> List CompiledFunction -> TestCoverageReport -> IO ()
-    showCoverageReport analysis funcs report = do
-      let covered = report.branchCoverage.coveredBranches
-      let tot = analysis.totalCanonical
-      let pct : Integer = if tot == 0 then 100 else (cast covered * 100) `div` cast tot
-
-      putStrLn $ "Coverage: " ++ show covered ++ "/" ++ show tot
-               ++ " canonical branches (" ++ show pct ++ "%)"
-      putStrLn ""
-
-      -- Test results summary
-      putStrLn $ "Tests: " ++ show report.passedTests ++ " passed, "
-               ++ show report.failedTests ++ " failed"
-      putStrLn ""
-
-      -- By module breakdown
-      putStrLn "By Module:"
-      let grouped = groupByModule funcs
-      traverse_ (printModuleCov covered tot) grouped
-      putStrLn ""
-
-      -- Show uncovered branches (test targets)
-      let uncoveredBranches = report.branchCoverage.uncoveredBranches
-      case uncoveredBranches of
-        [] => putStrLn "All branches covered!"
-        _ => do
-          putStrLn $ "Uncovered (test targets): " ++ show (length uncoveredBranches) ++ " branches"
-          traverse_ printUncovered (take 10 uncoveredBranches)
-          when (length uncoveredBranches > 10) $
-            putStrLn $ "  ... and " ++ show (length uncoveredBranches `minus` 10) ++ " more"
+              -- Show unknown CRASHes
+              case unknownFuncs of
+                [] => putStrLn "## Unknown CRASHes: none"
+                _ => do
+                  putStrLn $ "## Unknown CRASHes (investigate): " ++ show (length unknownFuncs)
+                  traverse_ (putStrLn . formatUnknownLine) unknownFuncs
 
 -- =============================================================================
 -- Main
@@ -345,6 +226,4 @@ main = do
      then putStrLn helpText
      else if opts.showVersion
              then putStrLn versionText
-             else case opts.subcommand of
-               Just "branches" => runBranches opts
-               _ => runCoverage opts
+             else runBranches opts  -- branches is the default (and only) command
