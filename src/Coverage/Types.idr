@@ -540,3 +540,233 @@ public export
 Show TestCoverageReport where
   show r = "Tests: " ++ show r.passedTests ++ "/" ++ show r.totalTests
         ++ ", Branch: " ++ show r.branchCoverage.branchPercent ++ "%"
+
+-- =============================================================================
+-- BranchId for Coverage Aggregation (OR-union across test runs)
+-- =============================================================================
+
+||| Unique identifier for a branch in compiled code
+||| Enables OR-aggregation across multiple test runs
+public export
+record BranchId where
+  constructor MkBranchId
+  moduleName  : String    -- "Main"
+  funcName    : String    -- "dispatchWith"
+  caseIndex   : Nat       -- Which %case in the function (0-indexed)
+  branchIndex : Nat       -- Which %concase/%constcase in the %case (0-indexed)
+
+public export
+Show BranchId where
+  show b = b.moduleName ++ "." ++ b.funcName ++ ":case" ++ show b.caseIndex
+        ++ ":branch" ++ show b.branchIndex
+
+public export
+Eq BranchId where
+  b1 == b2 = b1.moduleName == b2.moduleName
+          && b1.funcName == b2.funcName
+          && b1.caseIndex == b2.caseIndex
+          && b1.branchIndex == b2.branchIndex
+
+public export
+Ord BranchId where
+  compare b1 b2 =
+    case compare b1.moduleName b2.moduleName of
+      EQ => case compare b1.funcName b2.funcName of
+              EQ => case compare b1.caseIndex b2.caseIndex of
+                      EQ => compare b1.branchIndex b2.branchIndex
+                      x  => x
+              x  => x
+      x  => x
+
+-- =============================================================================
+-- BranchClass (dunham's classification)
+-- =============================================================================
+
+||| Branch classification per dunham's semantic coverage taxonomy
+public export
+data BranchClass : Type where
+  ||| Canonical - reachable branch, counts towards coverage denominator
+  BCCanonical : BranchClass
+  ||| Excluded - NoClauses (void/uninhabited), excluded from denominator
+  BCExcludedNoClauses : BranchClass
+  ||| Bug - UnhandledInput (partial code), genuine coverage gap to fix
+  BCBugUnhandledInput : BranchClass
+  ||| Optimizer - Nat case artifact, non-semantic (ignore in coverage)
+  BCOptimizerNat : BranchClass
+  ||| Unknown - other CRASHes, conservative bucket (investigate)
+  BCUnknownCrash : String -> BranchClass
+
+public export
+Show BranchClass where
+  show BCCanonical          = "canonical"
+  show BCExcludedNoClauses  = "excluded_void"
+  show BCBugUnhandledInput  = "bugs"
+  show BCOptimizerNat       = "optimizer_artifact"
+  show (BCUnknownCrash msg) = "unknown(" ++ msg ++ ")"
+
+public export
+Eq BranchClass where
+  BCCanonical         == BCCanonical         = True
+  BCExcludedNoClauses == BCExcludedNoClauses = True
+  BCBugUnhandledInput == BCBugUnhandledInput = True
+  BCOptimizerNat      == BCOptimizerNat      = True
+  BCUnknownCrash m1   == BCUnknownCrash m2   = m1 == m2
+  _                   == _                   = False
+
+||| Check if branch should be counted in coverage denominator
+public export
+isCountedInDenominator : BranchClass -> Bool
+isCountedInDenominator BCCanonical = True
+isCountedInDenominator _           = False
+
+-- =============================================================================
+-- ClassifiedBranch - BranchId + BranchClass
+-- =============================================================================
+
+||| A branch with unique ID and classification
+public export
+record ClassifiedBranch where
+  constructor MkClassifiedBranch
+  branchId    : BranchId
+  branchClass : BranchClass
+  pattern     : String      -- Pattern description (for debugging)
+
+public export
+Show ClassifiedBranch where
+  show cb = show cb.branchId ++ " [" ++ show cb.branchClass ++ "] " ++ cb.pattern
+
+public export
+Eq ClassifiedBranch where
+  cb1 == cb2 = cb1.branchId == cb2.branchId
+
+-- =============================================================================
+-- StaticBranchAnalysis - Static analysis result from --dumpcases
+-- =============================================================================
+
+||| Static analysis result for a single function
+public export
+record StaticFunctionAnalysis where
+  constructor MkStaticFunctionAnalysis
+  fullName : String
+  branches : List ClassifiedBranch
+
+public export
+Show StaticFunctionAnalysis where
+  show sfa = sfa.fullName ++ ": " ++ show (length sfa.branches) ++ " branches"
+
+||| Static analysis result for entire project
+public export
+record StaticBranchAnalysis where
+  constructor MkStaticBranchAnalysis
+  functions      : List StaticFunctionAnalysis
+  allBranches    : List ClassifiedBranch        -- Flat list of all branches
+  canonicalCount : Nat                          -- Count of BCCanonical branches
+
+public export
+Show StaticBranchAnalysis where
+  show sba = "StaticAnalysis: " ++ show (length sba.functions) ++ " functions, "
+          ++ show sba.canonicalCount ++ " canonical branches"
+
+-- =============================================================================
+-- TestRunHits - Runtime hit data from a single test run
+-- =============================================================================
+
+||| Branch hits from a single test execution
+public export
+record BranchHit where
+  constructor MkBranchHit
+  branchId : BranchId
+  hitCount : Nat
+
+public export
+Show BranchHit where
+  show bh = show bh.branchId ++ " ×" ++ show bh.hitCount
+
+public export
+Eq BranchHit where
+  bh1 == bh2 = bh1.branchId == bh2.branchId
+
+||| Hits from a single test run
+public export
+record TestRunHits where
+  constructor MkTestRunHits
+  testName  : String
+  timestamp : String
+  hits      : List BranchHit
+
+public export
+Show TestRunHits where
+  show trh = trh.testName ++ ": " ++ show (length trh.hits) ++ " branches hit"
+
+-- =============================================================================
+-- AggregatedCoverage - OR-union across test runs
+-- =============================================================================
+
+||| Aggregated coverage across multiple test runs
+||| Uses OR semantics: branch is covered if hit by ANY test run
+public export
+record AggregatedCoverage where
+  constructor MkAggregatedCoverage
+  staticAnalysis   : StaticBranchAnalysis
+  testRuns         : List TestRunHits
+  coveredBranches  : List BranchId      -- Branches hit by at least one test
+  -- Per-category coverage (per dunham's classification)
+  canonicalTotal   : Nat
+  canonicalCovered : Nat
+  bugsTotal        : Nat                -- UnhandledInput count
+  unknownTotal     : Nat                -- Unknown CRASHes count
+
+public export
+Show AggregatedCoverage where
+  show ac = "AggregatedCoverage: " ++ show ac.canonicalCovered
+         ++ "/" ++ show ac.canonicalTotal ++ " canonical ("
+         ++ show (coveragePercent ac) ++ "%)"
+  where
+    coveragePercent : AggregatedCoverage -> Double
+    coveragePercent a =
+      if a.canonicalTotal == 0
+      then 100.0
+      else cast a.canonicalCovered / cast a.canonicalTotal * 100.0
+
+||| Calculate coverage percentage for aggregated coverage
+public export
+aggregatedCoveragePercent : AggregatedCoverage -> Double
+aggregatedCoveragePercent ac =
+  if ac.canonicalTotal == 0
+  then 100.0
+  else cast ac.canonicalCovered / cast ac.canonicalTotal * 100.0
+
+-- =============================================================================
+-- Coverage Aggregation Functions
+-- =============================================================================
+
+||| Merge BranchHits from multiple test runs (OR semantics)
+||| A branch is covered if hit by ANY test run
+public export
+mergeBranchHits : List TestRunHits -> List BranchId
+mergeBranchHits runs =
+  let allHits = concatMap (.hits) runs
+      -- Get unique branch IDs that were hit at least once
+      hitBranches = map (.branchId) $ filter (\h => h.hitCount > 0) allHits
+  in nub hitBranches
+
+||| Count how many branches of a given class are covered
+public export
+countCoveredByClass : BranchClass -> List ClassifiedBranch -> List BranchId -> Nat
+countCoveredByClass cls allBranches coveredIds =
+  let classedBranches = filter (\cb => cb.branchClass == cls) allBranches
+      classedIds = map (.branchId) classedBranches
+  in length $ filter (\bid => elem bid coveredIds) classedIds
+
+||| Create aggregated coverage from static analysis and test runs
+public export
+aggregateCoverage : StaticBranchAnalysis -> List TestRunHits -> AggregatedCoverage
+aggregateCoverage static runs =
+  let covered = mergeBranchHits runs
+      canonTotal = length $ filter (\cb => cb.branchClass == BCCanonical) static.allBranches
+      canonCovered = countCoveredByClass BCCanonical static.allBranches covered
+      bugsTotal = length $ filter (\cb => cb.branchClass == BCBugUnhandledInput) static.allBranches
+      unknownTotal = length $ filter (\cb => case cb.branchClass of
+                                               BCUnknownCrash _ => True
+                                               _ => False) static.allBranches
+  in MkAggregatedCoverage static runs covered canonTotal canonCovered bugsTotal unknownTotal

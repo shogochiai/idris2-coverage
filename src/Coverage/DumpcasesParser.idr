@@ -71,20 +71,32 @@ Eq CaseKind where
   _               == _               = False
 
 -- =============================================================================
--- Compiled Case with CaseKind
+-- Compiled Case with CaseKind and BranchId
 -- =============================================================================
 
 ||| A single case branch in compiled output with semantic classification
 public export
 record CompiledCase where
   constructor MkCompiledCase
-  clauseId : Maybe Int       -- STerm clause ID if extractable
+  branchId : BranchId        -- Unique branch identifier for aggregation
   kind     : CaseKind        -- Canonical or NonCanonical with reason
   pattern  : String          -- Pattern description (for debugging)
 
 public export
 Show CompiledCase where
-  show c = "Case(" ++ show c.kind ++ ", " ++ c.pattern ++ ")"
+  show c = "Case(" ++ show c.branchId ++ ", " ++ show c.kind ++ ", " ++ c.pattern ++ ")"
+
+||| Convert CompiledCase to ClassifiedBranch
+public export
+toClassifiedBranch : CompiledCase -> ClassifiedBranch
+toClassifiedBranch c = MkClassifiedBranch c.branchId (caseKindToBranchClass c.kind) c.pattern
+  where
+    caseKindToBranchClass : CaseKind -> BranchClass
+    caseKindToBranchClass Canonical = BCCanonical
+    caseKindToBranchClass (NonCanonical CrashNoClauses) = BCExcludedNoClauses
+    caseKindToBranchClass (NonCanonical CrashUnhandledInput) = BCBugUnhandledInput
+    caseKindToBranchClass (NonCanonical CrashOptimizerNat) = BCOptimizerNat
+    caseKindToBranchClass (NonCanonical (CrashUnknown msg)) = BCUnknownCrash msg
 
 ||| Compiled function information extracted from --dumpcases
 public export
@@ -276,6 +288,27 @@ countConstCases s = go 0 (unpack s)
 -- Main Analysis
 -- =============================================================================
 
+||| Generate a list [0, 1, ..., n-1]
+range : Nat -> List Nat
+range Z = []
+range (S n) = range n ++ [n]
+
+||| Generate indexed BranchIds for canonical cases
+||| caseIdx=0 for the main %case block, branchIdx increments per %concase/%constcase
+generateIndexedCases : String -> String -> Nat -> Nat -> Nat -> List CompiledCase
+generateIndexedCases modName funcName caseIdx conCount constCount =
+  let conCases = map (\idx => MkCompiledCase
+                                (MkBranchId modName funcName caseIdx idx)
+                                Canonical
+                                "concase")
+                     (range conCount)
+      constCases = map (\idx => MkCompiledCase
+                                  (MkBranchId modName funcName caseIdx (conCount + idx))
+                                  Canonical
+                                  "constcase")
+                       (range constCount)
+  in conCases ++ constCases
+
 ||| Analyze a single function definition line from --dumpcases output
 public export
 analyzeFunction : String -> Maybe CompiledFunction
@@ -291,14 +324,19 @@ analyzeFunction line =
           hasDefault = isInfixOf "Just" bodyPart &&
                        not (isInfixOf "Just 0" bodyPart || isInfixOf "Just 1" bodyPart)
 
-          -- Build canonical cases
-          canonicalCases = replicate conCases (MkCompiledCase Nothing Canonical "concase")
-                        ++ replicate constCases (MkCompiledCase Nothing Canonical "constcase")
+          -- Build canonical cases with unique BranchIds
+          -- caseIdx=0 for the first (and typically only) %case block
+          canonicalCases = generateIndexedCases modName funcName 0 conCases constCases
 
           -- Build non-canonical cases from CRASH
+          -- BranchId uses branchIdx after all canonical cases
+          crashIdx = conCases + constCases
           crashCases = case crashMsg of
             Nothing => []
-            Just msg => [MkCompiledCase Nothing (NonCanonical (classifyCrashMessage msg)) msg]
+            Just msg => [MkCompiledCase
+                          (MkBranchId modName funcName 0 crashIdx)
+                          (NonCanonical (classifyCrashMessage msg))
+                          msg]
 
       in Just $ MkCompiledFunction
            fullName
@@ -398,6 +436,26 @@ aggregateAnalysis funcs =
     (sum $ map countOptimizerArtifacts funcs)
     (sum $ map countUnknownCases funcs)
     (length $ filter hasAnyCrash funcs)
+
+-- =============================================================================
+-- Conversion to StaticBranchAnalysis (for aggregation)
+-- =============================================================================
+
+||| Convert CompiledFunction to StaticFunctionAnalysis
+public export
+toStaticFunctionAnalysis : CompiledFunction -> StaticFunctionAnalysis
+toStaticFunctionAnalysis f =
+  MkStaticFunctionAnalysis f.fullName (map toClassifiedBranch f.cases)
+
+||| Convert list of CompiledFunctions to StaticBranchAnalysis
+||| This is the entry point for coverage aggregation
+public export
+toStaticBranchAnalysis : List CompiledFunction -> StaticBranchAnalysis
+toStaticBranchAnalysis funcs =
+  let funcAnalyses = map toStaticFunctionAnalysis funcs
+      allBranches = concatMap (.branches) funcAnalyses
+      canonCount = length $ filter (\cb => cb.branchClass == BCCanonical) allBranches
+  in MkStaticBranchAnalysis funcAnalyses allBranches canonCount
 
 ||| Convert CompiledFunction to SemanticCoverage
 public export

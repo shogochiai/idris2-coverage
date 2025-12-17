@@ -146,6 +146,18 @@ readProjectDepends projectDir = do
 -- Main Entry Point
 -- =============================================================================
 
+||| Extended report with semantic coverage from --dumpcases on test binary
+public export
+record TestCoverageReportExt where
+  constructor MkTestCoverageReportExt
+  baseReport      : TestCoverageReport
+  semanticCoverage : SemanticCoverage  -- From test binary's --dumpcases
+
+public export
+Show TestCoverageReportExt where
+  show r = show r.baseReport ++ " | Semantic: " ++ show r.semanticCoverage.executedCanonical
+        ++ "/" ++ show r.semanticCoverage.totalCanonical
+
 ||| REQ_COV_UNI_001: Run tests with profiling and return combined report
 ||| REQ_COV_UNI_002: Clean up all temporary files
 ||| REQ_COV_UNI_003: Exclude test modules from coverage calculation
@@ -262,3 +274,99 @@ runTestsWithCoverage projectDir testModules timeout = do
             failedCount
             branchSummary
             timestamp
+
+-- =============================================================================
+-- Extended Entry Point with --dumpcases on Test Binary
+-- =============================================================================
+
+||| Run tests with semantic coverage from test binary's --dumpcases
+||| This is the key function for accurate coverage: analyze the SAME binary that runs
+|||
+||| @projectDir - Path to project root (containing .ipkg)
+||| @testModules - List of test module names
+||| @timeout - Max seconds for build+run
+export
+runTestsWithSemanticCoverage : (projectDir : String)
+                              -> (testModules : List String)
+                              -> (timeout : Nat)
+                              -> IO (Either String SemanticCoverage)
+runTestsWithSemanticCoverage projectDir testModules timeout = do
+  case testModules of
+    [] => pure $ Left "No test modules specified"
+    _ => do
+      -- Read project dependencies
+      projectDepends <- readProjectDepends projectDir
+
+      -- Generate unique names
+      uid <- getUniqueId
+      let tempModName = "TempTestRunner_" ++ uid
+      let tempExecName = "temp-test-" ++ uid
+      let tempIdrPath = projectDir ++ "/src/" ++ tempModName ++ ".idr"
+      let tempIpkgPath = projectDir ++ "/" ++ tempExecName ++ ".ipkg"
+      let tempIpkgName = tempExecName ++ ".ipkg"
+      let ssHtmlPath = projectDir ++ "/" ++ tempExecName ++ ".ss.html"
+      let profileHtmlPath = projectDir ++ "/profile.html"
+      let dumpcasesPath = "/tmp/idris2_dumpcases_test_" ++ uid ++ ".txt"
+
+      -- Generate temp runner source
+      let runnerSource = generateTempRunner tempModName testModules
+      Right () <- writeFile tempIdrPath runnerSource
+        | Left err => pure $ Left $ "Failed to write temp runner: " ++ show err
+
+      -- Generate temp .ipkg
+      let allModules = tempModName :: testModules
+      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName projectDepends
+      Right () <- writeFile tempIpkgPath ipkgContent
+        | Left err => do
+            removeFileIfExists tempIdrPath
+            pure $ Left $ "Failed to write temp ipkg: " ++ show err
+
+      -- Build with --dumpcases on test binary
+      let buildCmd = "cd " ++ projectDir ++ " && idris2 --dumpcases " ++ dumpcasesPath
+                  ++ " --build " ++ tempIpkgName ++ " 2>&1"
+      putStrLn $ "Dumping case trees to " ++ dumpcasesPath
+      buildResult <- system buildCmd
+      if buildResult /= 0
+        then do
+          cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
+          removeFileIfExists dumpcasesPath
+          pure $ Left "Build with --dumpcases failed"
+        else do
+          -- Parse --dumpcases output from test binary
+          Right dumpContent <- readFile dumpcasesPath
+            | Left _ => do
+                cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
+                pure $ Left "Failed to read dumpcases output"
+
+          let funcs = parseDumpcasesFile dumpContent
+          let analysis = aggregateAnalysis funcs
+
+          -- Run executable with profiler
+          let relExecPath = "./build/exec/" ++ tempExecName
+          let relOutputFile = "./temp_test_output_" ++ uid ++ ".txt"
+          let absOutputFile = projectDir ++ "/temp_test_output_" ++ uid ++ ".txt"
+          _ <- system $ "cd " ++ projectDir ++ " && " ++ relExecPath ++ " > " ++ relOutputFile ++ " 2>&1"
+
+          -- Read .ss.html for profiler hits
+          Right ssHtml <- readFile ssHtmlPath
+            | Left _ => do
+                -- Return static analysis with 0 executed if no profiler output
+                cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
+                removeFileIfExists dumpcasesPath
+                removeFileIfExists absOutputFile
+                pure $ Right $ MkSemanticCoverage "test-binary" analysis.totalCanonical analysis.totalExcluded 0
+
+          -- Parse profiler output for executed branches
+          let branchPoints : List BranchPoint = parseBranchCoverage ssHtml
+          let executed : Nat = length $ filter (\bp => bp.coveredBranches > 0) branchPoints
+
+          -- Cleanup
+          cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
+          removeFileIfExists dumpcasesPath
+          removeFileIfExists absOutputFile
+
+          pure $ Right $ MkSemanticCoverage
+            "test-binary"
+            analysis.totalCanonical
+            analysis.totalExcluded
+            (cast executed)

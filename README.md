@@ -1,14 +1,29 @@
 # idris2-coverage
 
-**Semantic coverage library** for Idris2. Uses `--dumpcases` output to measure canonical case coverage with type-awareness.
+**Pragmatic coverage library** for Idris2. Uses `--dumpcases` output to measure canonical case coverage with type-awareness.
 
-**Self-coverage**: 220/901 branches (24%) - measured by running `idris2-cov .`
+**Self-coverage**: 170/1137 branches (14%) - measured by running `idris2-cov .`
+
+## Pragmatic Coverage Philosophy
+
+**The only problem this library solves:**
+
+> Absurd / Impossible branches polluting the denominator and preventing 100%
+
+Everything else is secondary. The goal is simple:
+
+1. **Exclude unreachable branches from denominator** → 100% is achievable
+2. **Flag genuine gaps (UnhandledInput)** → CI can fail on partial code
+3. **Ignore optimizer artifacts** → Don't count Nat→Integer translation noise
+
+This is **not** academic semantic coverage. It's practical CI coverage that:
+- Trusts Idris2's `impossible` declarations
+- Excludes void/absurd patterns from the denominator
+- Makes 100% coverage theoretically achievable
 
 ## Status / Scope
 
-This project is an experimental exploration of *semantic coverage* for Idris2.
-
-It currently uses `--dumpcases` output as a **pragmatic observation point**
+This project uses `--dumpcases` output as a **pragmatic observation point**
 to distinguish:
 - type-proven unreachable cases (absurd patterns), and
 - genuine coverage gaps.
@@ -16,8 +31,6 @@ to distinguish:
 **Important:**
 Using `--dumpcases` is a working assumption, not a claim that it is the
 ideal or intended interface for semantic coverage.
-Part of the motivation of this project is to understand *where* such
-semantic distinctions should properly live in the Idris2 pipeline.
 
 ### CRASH Classification (dunham's classification)
 
@@ -174,13 +187,21 @@ record CompiledFunction where
   cases          : List CompiledCase   -- With CaseKind classification
   hasDefaultCase : Bool
 
--- Semantic coverage per function
-record SemanticCoverage where
-  constructor MkSemanticCoverage
-  funcName          : String
-  totalCanonical    : Nat    -- Denominator
-  totalImpossible   : Nat    -- Excluded from denominator
-  executedCanonical : Nat    -- Numerator (from runtime)
+-- Semantic coverage per function (Pragmatic v1.0)
+record FunctionSemanticCoverage where
+  constructor MkFunctionSemanticCoverage
+  funcName           : String
+  moduleName         : String
+  -- Coverage 本体
+  totalCanonical     : Nat    -- Denominator
+  executedCanonical  : Nat    -- Numerator (from runtime)
+  coveragePercent    : Double
+  -- 分母から除外（100%達成可能に）
+  excludedNoClauses  : Nat    -- void/uninhabited
+  excludedOptimizer  : Nat    -- Nat case artifact
+  -- CI シグナル（分母に入れない）
+  bugUnhandledInput  : Nat    -- partial code (should fix)
+  unknownCrash       : Nat    -- conservative bucket
 
 -- Project-level analysis (dunham's classification)
 record SemanticAnalysis where

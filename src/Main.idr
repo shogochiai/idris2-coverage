@@ -253,11 +253,13 @@ runBranches opts = do
               -- Step 2: Find and run tests (using lib API)
               testModules <- findTestModules ipkg
 
-              -- Step 3: Get runtime coverage if tests found
+              -- Step 3: Get runtime coverage from TEST BINARY (not main binary)
+              -- This is key: --dumpcases runs on the same binary that executes
+              let projectDir = getProjectDir ipkg
               runtimeCov <- case testModules of
                 [] => pure Nothing
                 mods => do
-                  result <- analyzeProjectWithHits ipkg mods
+                  result <- runTestsWithSemanticCoverage projectDir mods 120
                   case result of
                     Left _ => pure Nothing
                     Right cov => pure $ Just cov
@@ -268,20 +270,21 @@ runBranches opts = do
               putStrLn $ "target: " ++ target
               putStrLn ""
 
-              -- Show runtime coverage if available
+              -- Show runtime coverage if available (from test binary's --dumpcases)
               case runtimeCov of
                 Nothing => putStrLn "## Runtime Coverage: (no tests found/run)"
                 Just cov => do
                   let pct = semanticCoveragePercent cov
-                  putStrLn $ "## Runtime Coverage"
+                  putStrLn $ "## Runtime Coverage (test binary)"
                   putStrLn $ "executed:           " ++ show cov.executedCanonical
                            ++ "/" ++ show cov.totalCanonical
                            ++ " (" ++ show (cast {to=Int} pct) ++ "%)"
+                  putStrLn $ "note: denominator is test binary's branches, not main binary"
               putStrLn ""
 
-              putStrLn "## Branch Classification (static)"
+              putStrLn "## Branch Classification (main binary - static)"
               putStrLn $ "canonical:          " ++ show analysis.totalCanonical
-                       ++ "   # reachable branches (test denominator)"
+                       ++ "   # reachable branches in main binary"
               putStrLn $ "excluded_void:      " ++ show analysis.totalExcluded
                        ++ "   # NoClauses - safe to exclude"
               putStrLn $ "bugs:               " ++ show analysis.totalBugs
