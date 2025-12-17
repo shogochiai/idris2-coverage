@@ -343,22 +343,27 @@ isNotCoveredCase : CompiledCase -> Bool
 isNotCoveredCase c = isBugCase c || isUnknownCase c
 
 ||| Count canonical cases in a function
+public export
 countCanonicalCases : CompiledFunction -> Nat
 countCanonicalCases f = length $ filter (\c => c.kind == Canonical) f.cases
 
 ||| Count excluded cases (NoClauses only)
+public export
 countExcludedCases : CompiledFunction -> Nat
 countExcludedCases f = length $ filter isExcludedCase f.cases
 
 ||| Count bug cases (UnhandledInput - partial code)
+public export
 countBugCases : CompiledFunction -> Nat
 countBugCases f = length $ filter isBugCase f.cases
 
 ||| Count optimizer artifact cases (Nat case not covered)
+public export
 countOptimizerArtifacts : CompiledFunction -> Nat
 countOptimizerArtifacts f = length $ filter isOptimizerArtifact f.cases
 
 ||| Count unknown CRASH cases
+public export
 countUnknownCases : CompiledFunction -> Nat
 countUnknownCases f = length $ filter isUnknownCase f.cases
 
