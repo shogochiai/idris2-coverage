@@ -122,15 +122,19 @@ hasUncoveredBranches : CompiledFunction -> Bool
 hasUncoveredBranches f =
   countBugCases f > 0 || countUnknownCases f > 0
 
-||| Find .ipkg file in directory
+||| Find .ipkg file in directory (prefer non-temp files)
 findIpkgInDir : String -> IO (Maybe String)
 findIpkgInDir dir = do
   Right entries <- listDir dir
     | Left _ => pure Nothing
   let ipkgs = filter (isSuffixOf ".ipkg") entries
-  case ipkgs of
-    [] => pure Nothing
+  -- Prefer non-temp ipkg files
+  let nonTemp = filter (not . isPrefixOf "temp-") ipkgs
+  case nonTemp of
     (x :: _) => pure $ Just (dir ++ "/" ++ x)
+    [] => case ipkgs of
+            (x :: _) => pure $ Just (dir ++ "/" ++ x)
+            [] => pure Nothing
 
 ||| Resolve target path to ipkg path
 resolveIpkg : String -> IO (Either String String)
@@ -159,33 +163,74 @@ formatBugLine f = "- " ++ f.fullName ++ ": UnhandledInput"
 formatUnknownLine : CompiledFunction -> String
 formatUnknownLine f = "- " ++ f.fullName ++ ": Unknown CRASH"
 
-||| Run branches subcommand with classification-aware report
+||| Find test modules in ipkg (modules with 'Test' in name)
+||| Simple heuristic: split on whitespace/comma, filter for "Test"
+findTestModules : String -> IO (List String)
+findTestModules ipkg = do
+  Right content <- readFile ipkg
+    | Left _ => pure []
+  -- Split content into words, filter for module-like names with "Test"
+  let words = filter (not . null) $ map trim $ forget $ split isDelim content
+  pure $ filter isTestModule words
+  where
+    isDelim : Char -> Bool
+    isDelim c = c == ',' || c == ' ' || c == '\n' || c == '\t'
+
+    isTestModule : String -> Bool
+    isTestModule m = isInfixOf "Test" m && length m > 4 && not (isInfixOf "=" m)
+
+||| Run coverage analysis using lib API
 runBranches : Options -> IO ()
 runBranches opts = do
   case opts.targetPath of
-    Nothing => putStrLn "Error: No target specified\n\nUsage: idris2-cov branches <dir-or-ipkg>"
+    Nothing => putStrLn "Error: No target specified\n\nUsage: idris2-cov <dir-or-ipkg>"
     Just target => do
       ipkgResult <- resolveIpkg target
       case ipkgResult of
         Left err => putStrLn $ "Error: " ++ err
         Right ipkg => do
-          result <- analyzeProjectFunctions ipkg
-          case result of
+          -- Get timestamp
+          ts <- getTimestamp
+
+          -- Step 1: Static analysis (always)
+          staticResult <- analyzeProjectFunctions ipkg
+          case staticResult of
             Left err => putStrLn $ "Error: " ++ err
             Right funcs => do
               let analysis = aggregateAnalysis funcs
               let bugFuncs = filter (\f => countBugCases f > 0) funcs
               let unknownFuncs = filter (\f => countUnknownCases f > 0) funcs
 
-              -- Get timestamp
-              ts <- getTimestamp
+              -- Step 2: Find and run tests (using lib API)
+              testModules <- findTestModules ipkg
 
-              -- Classification-aware report format
+              -- Step 3: Get runtime coverage if tests found
+              runtimeCov <- case testModules of
+                [] => pure Nothing
+                mods => do
+                  result <- analyzeProjectWithHits ipkg mods
+                  case result of
+                    Left _ => pure Nothing
+                    Right cov => pure $ Just cov
+
+              -- Output classification-aware report
               putStrLn $ "# Coverage Report"
               putStrLn $ ts
               putStrLn $ "target: " ++ target
               putStrLn ""
-              putStrLn "## Branch Classification"
+
+              -- Show runtime coverage if available
+              case runtimeCov of
+                Nothing => putStrLn "## Runtime Coverage: (no tests found/run)"
+                Just cov => do
+                  let pct = semanticCoveragePercent cov
+                  putStrLn $ "## Runtime Coverage"
+                  putStrLn $ "executed:           " ++ show cov.executedCanonical
+                           ++ "/" ++ show cov.totalCanonical
+                           ++ " (" ++ show (cast {to=Int} pct) ++ "%)"
+              putStrLn ""
+
+              putStrLn "## Branch Classification (static)"
               putStrLn $ "canonical:          " ++ show analysis.totalCanonical
                        ++ "   # reachable branches (test denominator)"
               putStrLn $ "excluded_void:      " ++ show analysis.totalExcluded
