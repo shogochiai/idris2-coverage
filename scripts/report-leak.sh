@@ -52,10 +52,10 @@ else
   echo "Do you already have idris2-coverage cloned somewhere?"
   echo "  1) Yes, I have an existing clone"
   echo "  2) No, clone it for me"
-  read -p "Choice [1/2]: " -n 1 -r CLONE_CHOICE
   echo ""
+  read -p "Choice [1/2]: " CLONE_CHOICE
 
-  if [[ $CLONE_CHOICE == "1" ]]; then
+  if [[ "$CLONE_CHOICE" == "1" ]]; then
     # User has existing clone
     echo ""
     read -p "Enter path to existing clone: " EXISTING_PATH
@@ -70,33 +70,18 @@ else
     WORK_DIR="$EXISTING_PATH"
     echo "Using existing clone: $WORK_DIR"
   else
-    # Need to clone
+    # Need to clone - ask where first
     echo ""
-
-    # Check if user owns the upstream repo
-    GITHUB_USER=$(gh api user -q .login 2>/dev/null || echo "")
-    UPSTREAM_OWNER=$(echo "$UPSTREAM_REPO" | cut -d'/' -f1)
-
-    if [ "$GITHUB_USER" = "$UPSTREAM_OWNER" ]; then
-      echo "You own $UPSTREAM_REPO - will clone directly (no fork needed)."
-      IS_OWNER=true
-    else
-      echo "Will fork $UPSTREAM_REPO to your account."
-      IS_OWNER=false
-    fi
-    echo ""
-
-    read -p "Where should I clone it? [~/src]: " CLONE_BASE
-    CLONE_BASE=${CLONE_BASE:-~/src}
+    read -p "Where should I clone idris2-coverage? [~/src]: " CLONE_BASE
+    CLONE_BASE="${CLONE_BASE:-$HOME/src}"
     CLONE_BASE="${CLONE_BASE/#\~/$HOME}"  # Expand ~
 
     WORK_DIR="$CLONE_BASE/idris2-coverage"
 
     echo ""
     echo "Will clone to: $WORK_DIR"
-    read -p "Continue? [Y/n] " -n 1 -r
-    echo
-    if [[ $REPLY =~ ^[Nn]$ ]]; then
+    read -p "Continue? [Y/n]: " CONTINUE_REPLY
+    if [[ "$CONTINUE_REPLY" =~ ^[Nn] ]]; then
       echo "Aborted."
       exit 0
     fi
@@ -107,7 +92,11 @@ else
       mkdir -p "$CLONE_BASE"
       cd "$CLONE_BASE"
 
-      if [ "$IS_OWNER" = true ]; then
+      # Check if user owns the upstream repo (determines fork vs direct clone)
+      GITHUB_USER=$(gh api user -q .login 2>/dev/null || echo "")
+      UPSTREAM_OWNER=$(echo "$UPSTREAM_REPO" | cut -d'/' -f1)
+
+      if [ "$GITHUB_USER" = "$UPSTREAM_OWNER" ]; then
         # Owner: clone directly
         echo "Cloning $UPSTREAM_REPO..."
         gh repo clone "$UPSTREAM_REPO" || {
@@ -116,7 +105,7 @@ else
         }
       else
         # Contributor: fork then clone
-        echo "Forking and cloning..."
+        echo "Forking and cloning $UPSTREAM_REPO..."
         gh repo fork "$UPSTREAM_REPO" --clone=true || {
           # If fork already exists, clone it
           echo "Fork may already exist, trying to clone..."
