@@ -154,6 +154,27 @@ Where:
 - `impossible` = `NoClauses` + `OptimizerNat`
 - `executed` = branches hit at runtime (from `.ss.html` profiler)
 
+### Denominator Exclusions (Static Analysis)
+
+The **denominator** is calculated from `--dumpcases` output with these exclusions:
+
+| Exclusion | Pattern | Reason |
+|-----------|---------|--------|
+| **NoClauses** | `CRASH "No clauses in..."` | Void/absurd - mathematically unreachable |
+| **OptimizerNat** | `CRASH "Nat case not covered"` | Compiler optimization artifact |
+| **Standard Library** | `Prelude.*`, `Data.*`, etc. | Not user code |
+| **Compiler Generated** | `{csegen:*}`, `case block in...` | Internal compiler functions |
+
+### Numerator Attribution (Runtime Hits)
+
+The **numerator** uses Chez Scheme profiler data (`.ss.html`) with deterministic name matching:
+
+1. **Idris → Scheme name mangling**: `Module.Func.==` → `ModuleC-45Func-C-61C-61`
+2. **Exact/suffix matching**: Prevents mis-attribution (no `isInfixOf`)
+3. **Per-function granularity**: Each function gets its actual hit count
+
+Functions that don't match are safely excluded (stdlib, builtins, data constructors).
+
 ## Requirements
 
 - Idris2 0.8.0+

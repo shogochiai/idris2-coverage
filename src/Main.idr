@@ -353,14 +353,8 @@ runBranches opts = do
                 mods => runTestsWithFunctionHits projectDir mods 120
 
               functionHits <- case functionHitsResult of
-                Left err => do
-                  -- Per-function hits unavailable, will use legacy fallback
-                  pure Nothing
-                Right hits => do
-                  -- TODO: FunctionRuntimeHit matching needs improvement
-                  -- Currently expression coverage parsing doesn't differentiate per-function
-                  -- For now, fall back to legacy proportional approximation
-                  pure Nothing  -- Disabled until matching is improved
+                Left _ => pure Nothing
+                Right hits => pure (Just hits)
 
               -- Also get aggregate coverage for display (uses separate test run)
               runtimeCov <- case testModules of

@@ -438,12 +438,24 @@ isTypeConstructor : String -> Bool
 isTypeConstructor name =
   isSuffixOf "." name && not (isPrefixOf "{" name)
 
+||| Check if function is test code (should not be coverage target)
+||| Patterns: *.Tests.*, *.AllTests.*, test_*
+||| Rationale: Test code tests other code, it shouldn't be a coverage target itself
+export
+isTestCode : String -> Bool
+isTestCode name =
+     isInfixOf ".Tests." name        -- Module.Tests.SubModule.func
+  || isInfixOf ".AllTests." name     -- Module.AllTests.func
+  || isSuffixOf ".AllTests" name     -- Module.AllTests (module itself)
+  || isPrefixOf "test_" name         -- test_funcName (common naming convention)
+
 ||| Check if function should be excluded from coverage targets (without config)
 shouldExcludeFromTargets : String -> Bool
 shouldExcludeFromTargets name =
      isCompilerGenerated name
   || isStandardLibrary name
   || isTypeConstructor name
+  || isTestCode name
 
 ||| Check if function should be excluded with user config
 shouldExcludeFromTargetsWithConfig : ExclusionConfig -> String -> Bool
@@ -609,7 +621,8 @@ testAnalysisToJson a = unlines
   , "    \"compiler_generated\": " ++ show a.exclusionBreakdown.compilerGenerated ++ ","
   , "    \"standard_library\": " ++ show a.exclusionBreakdown.standardLibrary ++ ","
   , "    \"type_constructors\": " ++ show a.exclusionBreakdown.typeConstructors ++ ","
-  , "    \"dependencies\": " ++ show a.exclusionBreakdown.dependencies
+  , "    \"dependencies\": " ++ show a.exclusionBreakdown.dependencies ++ ","
+  , "    \"test_code\": " ++ show a.exclusionBreakdown.testCode
   , "  },"
   , "  \"functions_with_crash\": " ++ show a.functionsWithCrash
   , "}"
@@ -688,7 +701,8 @@ coverageReportToJson analysis targets = unlines
   , "      \"compiler_generated\": " ++ show analysis.exclusionBreakdown.compilerGenerated ++ ","
   , "      \"standard_library\": " ++ show analysis.exclusionBreakdown.standardLibrary ++ ","
   , "      \"type_constructors\": " ++ show analysis.exclusionBreakdown.typeConstructors ++ ","
-  , "      \"dependencies\": " ++ show analysis.exclusionBreakdown.dependencies
+  , "      \"dependencies\": " ++ show analysis.exclusionBreakdown.dependencies ++ ","
+  , "      \"test_code\": " ++ show analysis.exclusionBreakdown.testCode
   , "    }"
   , "  },"
   , "  \"high_impact_targets\": " ++ targetsToJsonArray targets

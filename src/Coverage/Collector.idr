@@ -468,17 +468,62 @@ collectFromFiles htmlPath schemePath = do
   pure $ Right $ collectProfile htmlContent schemeContent
 
 -- =============================================================================
+-- Chez Scheme Name Mangling (Compiler-equivalent, deterministic)
+-- =============================================================================
+
+||| Encode a single character using Chez Scheme rules
+||| Alphanumeric and underscore pass through; others become C-<ord>
+||| Based on Idris2 src/Compiler/Scheme/Common.idr schString
+chezEncodeChar : Char -> String
+chezEncodeChar c =
+  if isAlphaNum c || c == '_'
+     then singleton c
+     else "C-" ++ show (ord c)
+
+||| Encode a string using Chez Scheme mangling rules
+||| This is equivalent to Idris2's schString function
+export
+chezEncodeString : String -> String
+chezEncodeString s = fastConcat $ map chezEncodeChar (unpack s)
+
+||| Convert Idris qualified function name to Chez Scheme identifier
+||| "Prelude.EqOrd.==" -> "PreludeC-45EqOrd-C-61C-61"
+||| "Sample.add" -> "Sample-add"
+|||
+||| Algorithm (from Idris2 schName):
+|||   1. Split on '.' to get namespace segments + function name
+|||   2. Join namespace segments with '-'
+|||   3. Encode the joined namespace string (- becomes C-45)
+|||   4. Append '-' and encoded function name
+export
+chezMangle : String -> String
+chezMangle idrisName =
+  let parts = forget $ split (== '.') idrisName
+  in case (init' parts, last' parts) of
+       (_, Nothing) => ""  -- empty string
+       (Nothing, Just funcName) =>
+         -- No namespace, just function name
+         chezEncodeString funcName
+       (Just [], Just funcName) =>
+         -- No namespace, just function name
+         chezEncodeString funcName
+       (Just nsParts, Just funcName) =>
+         -- Namespace + function name
+         let nsJoined = fastConcat $ intersperse "-" nsParts
+             nsEncoded = chezEncodeString nsJoined
+             funcEncoded = chezEncodeString funcName
+         in nsEncoded ++ "-" ++ funcEncoded
+
+-- =============================================================================
 -- FunctionRuntimeHit Matching (CLI/API Shared Logic)
 -- =============================================================================
 
 ||| Convert Idris function name to Scheme function name pattern
-||| "Main.dispatch" -> "Main-dispatch" or "MainC-45dispatch"
-||| This handles the common Idris->Scheme name mangling patterns
+||| DEPRECATED: Use chezMangle for deterministic matching
+||| Kept for backward compatibility
 export
 idrisFuncToSchemePattern : String -> String
-idrisFuncToSchemePattern idrisName =
-  -- Replace dots with dashes or "C-45"
-  fastConcat $ intersperse "-" $ forget $ split (== '.') idrisName
+idrisFuncToSchemePattern = chezMangle
 
 ||| Match a CompiledFunction with expression coverage data
 ||| Returns FunctionRuntimeHit with combined static + runtime data
@@ -522,12 +567,15 @@ matchFunctionWithCoverage func lineToExprs funcDefs =
     countCanonical : List CompiledCase -> Nat
     countCanonical = length . filter (\c => c.kind == Canonical)
 
-    -- Find Scheme function name that contains our pattern
+    -- Find Scheme function name using deterministic matching
+    -- Priority: 1) Exact match, 2) Suffix match (for u-- prefixed names)
+    -- Soundness: Never use isInfixOf to avoid mis-attribution
     findMatchingScheme : String -> List (String, Nat) -> Maybe String
-    findMatchingScheme pattern [] = Nothing
-    findMatchingScheme pattern ((name, _) :: rest) =
-      if isInfixOf pattern name then Just name
-      else findMatchingScheme pattern rest
+    findMatchingScheme expected [] = Nothing
+    findMatchingScheme expected ((name, _) :: rest) =
+      if name == expected then Just name
+      else if isSuffixOf expected name then Just name  -- handles u--Main-func -> Main-func
+      else findMatchingScheme expected rest
 
     -- Find start line for a Scheme function
     findFuncStartLine : String -> List (String, Nat) -> Nat

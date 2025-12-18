@@ -796,6 +796,39 @@ test_UNI_005 = do
   pure True
 
 -- =============================================================================
+-- ChezMangle Tests (MGL_001-004)
+-- =============================================================================
+
+||| REQ_COV_MGL_001: Simple single-segment name
+covering
+test_MGL_001 : IO Bool
+test_MGL_001 = do
+  let result = chezMangle "Main"
+  pure $ result == "Main"
+
+||| REQ_COV_MGL_002: Two-segment name (no encoding needed)
+covering
+test_MGL_002 : IO Bool
+test_MGL_002 = do
+  let result = chezMangle "Sample.add"
+  pure $ result == "Sample-add"
+
+||| REQ_COV_MGL_003: Multi-segment stdlib name (hyphen encoded as C-45)
+covering
+test_MGL_003 : IO Bool
+test_MGL_003 = do
+  let result = chezMangle "Prelude.IO.putStrLn"
+  pure $ result == "PreludeC-45IO-putStrLn"
+
+||| REQ_COV_MGL_004: Operator name with encoding
+covering
+test_MGL_004 : IO Bool
+test_MGL_004 = do
+  let result = chezMangle "Prelude.EqOrd.=="
+  -- == becomes C-61C-61 (61 = ord '=')
+  pure $ result == "PreludeC-45EqOrd-C-61C-61"
+
+-- =============================================================================
 -- All Tests
 -- =============================================================================
 
@@ -890,6 +923,10 @@ allTests =
   , ("REQ_COV_UNI_001", test_UNI_003)
   , ("REQ_COV_UNI_002", test_UNI_004)
   , ("REQ_COV_UNI_003", test_UNI_005)
+  , ("REQ_COV_MGL_001", test_MGL_001)
+  , ("REQ_COV_MGL_002", test_MGL_002)
+  , ("REQ_COV_MGL_003", test_MGL_003)
+  , ("REQ_COV_MGL_004", test_MGL_004)
   ]
 
 -- =============================================================================

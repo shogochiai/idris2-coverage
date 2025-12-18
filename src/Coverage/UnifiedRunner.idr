@@ -46,14 +46,15 @@ generateTempRunner modName testModules = unlines
 
 ||| Generate temporary .ipkg file
 ||| @depends - Additional package dependencies (e.g., from target project's ipkg)
-generateTempIpkg : String -> String -> List String -> String -> List String -> String
-generateTempIpkg pkgName mainMod modules execName depends =
+||| @sourcedir - Source directory (from target project's ipkg, defaults to "src")
+generateTempIpkg : String -> String -> List String -> String -> List String -> String -> String
+generateTempIpkg pkgName mainMod modules execName depends sourcedir =
   let allDepends = "base, contrib, idris2-coverage" ++
         (if null depends then "" else ", " ++ joinStrings ", " depends)
   in unlines
     [ "package " ++ pkgName
     , "opts = \"--profile\""
-    , "sourcedir = \"src\""
+    , "sourcedir = \"" ++ sourcedir ++ "\""
     , "main = " ++ mainMod
     , "executable = " ++ execName
     , "depends = " ++ allDepends
@@ -126,22 +127,49 @@ parseIpkgDepends content =
                         else afterEquals
          in map trim $ forget $ split (== ',') pkgStr
 
+||| Parse sourcedir from ipkg content (defaults to "src")
+parseIpkgSourcedir : String -> String
+parseIpkgSourcedir content =
+  let ls = lines content
+      sourcedirLines = filter (isPrefixOf "sourcedir") (map trim ls)
+  in case sourcedirLines of
+       [] => "src"
+       (line :: _) =>
+         let afterEquals = trim $ snd $ break (== '=') line
+             stripped = if isPrefixOf "=" afterEquals
+                          then trim (substr 1 (length afterEquals) afterEquals)
+                          else afterEquals
+         in trim $ pack $ filter (/= '"') (unpack stripped)
+
+||| Find and read first matching ipkg file content
+findIpkgContent : String -> IO (Maybe String)
+findIpkgContent projectDir = do
+  -- Try to find any .ipkg file in the directory
+  Right entries <- listDir projectDir
+    | Left _ => pure Nothing
+  let ipkgFiles = filter (isSuffixOf ".ipkg") entries
+  case ipkgFiles of
+    [] => pure Nothing
+    (f :: _) => do
+      Right content <- readFile (projectDir ++ "/" ++ f)
+        | Left _ => pure Nothing
+      pure (Just content)
+
 ||| Read depends from project's ipkg file
 public export
 readProjectDepends : String -> IO (List String)
 readProjectDepends projectDir = do
-  -- Try common ipkg names
-  let ipkgCandidates = [projectDir ++ "/lazycore.ipkg"
-                       , projectDir ++ "/package.ipkg"
-                       , projectDir ++ "/project.ipkg"]
-  tryReadFirst ipkgCandidates
-  where
-    tryReadFirst : List String -> IO (List String)
-    tryReadFirst [] = pure []
-    tryReadFirst (path :: rest) = do
-      Right content <- readFile path
-        | Left _ => tryReadFirst rest
-      pure $ parseIpkgDepends content
+  Just content <- findIpkgContent projectDir
+    | Nothing => pure []
+  pure $ parseIpkgDepends content
+
+||| Read sourcedir from project's ipkg file (defaults to "src")
+public export
+readProjectSourcedir : String -> IO String
+readProjectSourcedir projectDir = do
+  Just content <- findIpkgContent projectDir
+    | Nothing => pure "src"
+  pure $ parseIpkgSourcedir content
 
 -- =============================================================================
 -- Main Entry Point
@@ -178,14 +206,15 @@ runTestsWithCoverage projectDir testModules timeout = do
   case testModules of
     [] => pure $ Left "No test modules specified"
     _ => do
-      -- Read project dependencies
+      -- Read project dependencies and sourcedir
       projectDepends <- readProjectDepends projectDir
+      sourcedir <- readProjectSourcedir projectDir
 
       -- Generate unique names
       uid <- getUniqueId
       let tempModName = "TempTestRunner_" ++ uid
       let tempExecName = "temp-test-" ++ uid
-      let tempIdrPath = projectDir ++ "/src/" ++ tempModName ++ ".idr"
+      let tempIdrPath = projectDir ++ "/" ++ sourcedir ++ "/" ++ tempModName ++ ".idr"
       let tempIpkgPath = projectDir ++ "/" ++ tempExecName ++ ".ipkg"
       -- Chez Scheme profiler generates .ss.html in the current working directory (where executable runs)
       let ssHtmlPath = projectDir ++ "/" ++ tempExecName ++ ".ss.html"
@@ -199,7 +228,7 @@ runTestsWithCoverage projectDir testModules timeout = do
 
       -- Generate temp .ipkg (test modules only - Coverage.* comes from idris2-coverage package)
       let allModules = tempModName :: testModules
-      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName projectDepends
+      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName projectDepends sourcedir
       Right () <- writeFile tempIpkgPath ipkgContent
         | Left err => do
             removeFileIfExists tempIdrPath
@@ -297,14 +326,15 @@ runTestsWithTestCoverage projectDir testModules timeout = do
   case testModules of
     [] => pure $ Left "No test modules specified"
     _ => do
-      -- Read project dependencies
+      -- Read project dependencies and sourcedir
       projectDepends <- readProjectDepends projectDir
+      sourcedir <- readProjectSourcedir projectDir
 
       -- Generate unique names
       uid <- getUniqueId
       let tempModName = "TempTestRunner_" ++ uid
       let tempExecName = "temp-test-" ++ uid
-      let tempIdrPath = projectDir ++ "/src/" ++ tempModName ++ ".idr"
+      let tempIdrPath = projectDir ++ "/" ++ sourcedir ++ "/" ++ tempModName ++ ".idr"
       let tempIpkgPath = projectDir ++ "/" ++ tempExecName ++ ".ipkg"
       let tempIpkgName = tempExecName ++ ".ipkg"
       let ssHtmlPath = projectDir ++ "/" ++ tempExecName ++ ".ss.html"
@@ -318,7 +348,7 @@ runTestsWithTestCoverage projectDir testModules timeout = do
 
       -- Generate temp .ipkg
       let allModules = tempModName :: testModules
-      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName projectDepends
+      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName projectDepends sourcedir
       Right () <- writeFile tempIpkgPath ipkgContent
         | Left err => do
             removeFileIfExists tempIdrPath
@@ -393,14 +423,15 @@ runTestsWithFunctionHits projectDir testModules timeout = do
   case testModules of
     [] => pure $ Left "No test modules specified"
     _ => do
-      -- Read project dependencies
+      -- Read project dependencies and sourcedir
       projectDepends <- readProjectDepends projectDir
+      sourcedir <- readProjectSourcedir projectDir
 
       -- Generate unique names
       uid <- getUniqueId
       let tempModName = "TempTestRunner_" ++ uid
       let tempExecName = "temp-test-" ++ uid
-      let tempIdrPath = projectDir ++ "/src/" ++ tempModName ++ ".idr"
+      let tempIdrPath = projectDir ++ "/" ++ sourcedir ++ "/" ++ tempModName ++ ".idr"
       let tempIpkgPath = projectDir ++ "/" ++ tempExecName ++ ".ipkg"
       let tempIpkgName = tempExecName ++ ".ipkg"
       let ssHtmlPath = projectDir ++ "/" ++ tempExecName ++ ".ss.html"
@@ -415,7 +446,7 @@ runTestsWithFunctionHits projectDir testModules timeout = do
 
       -- Generate temp .ipkg
       let allModules = tempModName :: testModules
-      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName projectDepends
+      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName projectDepends sourcedir
       Right () <- writeFile tempIpkgPath ipkgContent
         | Left err => do
             removeFileIfExists tempIdrPath

@@ -212,6 +212,7 @@ record ExclusionBreakdown where
   standardLibrary   : Nat  -- Prelude.*, System.*, Data.*, etc.
   typeConstructors  : Nat  -- Names ending with "."
   dependencies      : Nat  -- User-specified packages/modules
+  testCode          : Nat  -- *.Tests.*, test_* (test code, not coverage target)
 
 public export
 Show ExclusionBreakdown where
@@ -219,10 +220,11 @@ Show ExclusionBreakdown where
         ++ ", stdlib=" ++ show b.standardLibrary
         ++ ", typeCtor=" ++ show b.typeConstructors
         ++ ", deps=" ++ show b.dependencies
+        ++ ", test=" ++ show b.testCode
 
 public export
 totalExcludedFromDenom : ExclusionBreakdown -> Nat
-totalExcludedFromDenom b = b.compilerGenerated + b.standardLibrary + b.typeConstructors + b.dependencies
+totalExcludedFromDenom b = b.compilerGenerated + b.standardLibrary + b.typeConstructors + b.dependencies + b.testCode
 
 public export
 record TestAnalysis where
@@ -570,6 +572,23 @@ countDependencyCases config f =
      then length f.cases
      else 0
 
+||| Check if function is test code (*.Tests.*, test_*)
+public export
+isTestCodeFunction : CompiledFunction -> Bool
+isTestCodeFunction f =
+     isInfixOf ".Tests." f.fullName
+  || isInfixOf ".AllTests." f.fullName
+  || isSuffixOf ".AllTests" f.fullName
+  || isPrefixOf "test_" f.fullName
+
+||| Count test code cases
+public export
+countTestCodeCases : CompiledFunction -> Nat
+countTestCodeCases f =
+  if isTestCodeFunction f && not (shouldExcludeFunction f)
+     then length f.cases
+     else 0
+
 ||| Legacy: Count not-covered cases (Bug + Unknown)
 countNotCoveredCases : CompiledFunction -> Nat
 countNotCoveredCases f = length $ filter isNotCoveredCase f.cases
@@ -593,14 +612,15 @@ parseDumpcasesFile content =
 public export
 aggregateAnalysisWithConfig : ExclusionConfig -> List CompiledFunction -> TestAnalysis
 aggregateAnalysisWithConfig config funcs =
-  let -- Filter out all excluded functions
-      userFuncs = filter (not . shouldExcludeFunctionWithConfig config) funcs
+  let -- Filter out all excluded functions (including test code)
+      userFuncs = filter (\f => not (shouldExcludeFunctionWithConfig config f) && not (isTestCodeFunction f)) funcs
       -- Count excluded cases by category
       compGenCases = sum (map countCompilerGeneratedCases funcs)
       stdlibCases  = sum (map countStandardLibraryCases funcs)
       typeCtorCases = sum (map countTypeConstructorCases funcs)
       depCases = sum (map (countDependencyCases config) funcs)
-      breakdown = MkExclusionBreakdown compGenCases stdlibCases typeCtorCases depCases
+      testCases = sum (map countTestCodeCases funcs)
+      breakdown = MkExclusionBreakdown compGenCases stdlibCases typeCtorCases depCases testCases
   in MkTestAnalysis
     (length funcs)
     (sum $ map countCanonicalCases userFuncs)  -- Only user code in denominator
