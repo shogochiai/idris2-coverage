@@ -2,6 +2,28 @@
 
 **Pragmatic coverage library** for Idris2. Uses `--dumpcases` output to measure canonical case coverage with type-awareness.
 
+---
+
+## 🙏 Help Keep This Fresh
+
+> **Your codebase keeps this project accurate.**
+
+The exclusion patterns (compiler-generated functions, stdlib modules) are **Idris2 version-dependent**. When you update Idris2 and see unexpected functions in your coverage report, you can help fix it with **two commands**:
+
+```bash
+# 1. Check for leaks
+./scripts/detect-leaks.sh /path/to/your/project 1000
+
+# 2. If leaks found, auto-create a PR
+./scripts/report-leak.sh /path/to/your/project 1000
+```
+
+That's it. The script creates a PR with all the details. **We need your eyes on different codebases and Idris2 versions.**
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#idris2-version-tracking-contributor-guide) for the full contributor guide.
+
+---
+
 ## The Problem We Solve
 
 > Absurd / Impossible branches polluting the denominator and preventing 100%

@@ -129,6 +129,8 @@ The exclusion patterns (compiler-generated functions, standard library prefixes,
 
 **If we don't track these, users will see "leaks" in their coverage reports.**
 
+**Your codebase and report keeps this project fresh. We need enough amount of eyes.**
+
 ### Tracking Workflow
 
 When a new Idris2 version is released:
@@ -192,39 +194,40 @@ isStandardLibraryFunction name =
 |-----------------|----------------|-------|
 | 0.1.x           | 0.7.0          | Initial release |
 
-### Quick Leak Detection Script
+### Scripts
 
-Save as `scripts/detect-leaks.sh`:
+Two scripts are provided in `scripts/`:
+
+#### `detect-leaks.sh` - Check for Leaks
 
 ```bash
-#!/bin/bash
-# Detect potential exclusion leaks after Idris2 update
+# Check your project for exclusion leaks
+./scripts/detect-leaks.sh /path/to/project 1000
 
-PROJECT=${1:-.}
-TOP=${2:-1000}
-
-./build/exec/idris2-cov --json --top $TOP "$PROJECT" 2>/dev/null | \
-  jq -r '.high_impact_targets[].funcName' | \
-  grep -E '^(\{|_builtin\.|prim__|Prelude\.|Data\.|System\.|Control\.|Decidable\.|Language\.|Debug\.)' | \
-  sort -u | \
-  while read func; do
-    echo "LEAK: $func"
-  done
-
-LEAK_COUNT=$(./build/exec/idris2-cov --json --top $TOP "$PROJECT" 2>/dev/null | \
-  jq -r '.high_impact_targets[].funcName' | \
-  grep -cE '^(\{|_builtin\.|prim__|Prelude\.|Data\.|System\.|Control\.|Decidable\.|Language\.|Debug\.)')
-
-if [ "$LEAK_COUNT" -gt 0 ]; then
-  echo ""
-  echo "Found $LEAK_COUNT potential leaks. Update exclusion patterns in:"
-  echo "  src/Coverage/DumpcasesParser.idr"
-  exit 1
-else
-  echo "No leaks detected."
-  exit 0
-fi
+# Output:
+# Analyzing /path/to/project with top 1000 targets...
+# No leaks detected.
+#   OR
+# LEAKS DETECTED:
+#   - {newpattern:42}
+#   - SomeNew.Module.func
 ```
+
+#### `report-leak.sh` - Auto-Create PR
+
+If leaks are found, contributors can auto-create a PR:
+
+```bash
+# Fork and clone idris2-coverage first, then:
+./scripts/report-leak.sh /path/to/project 1000
+
+# This will:
+# 1. Detect leaks
+# 2. Create a branch with leak report
+# 3. Open a PR via `gh` CLI
+```
+
+**Prerequisites**: `gh` CLI installed and authenticated.
 
 ### CI Integration (Future)
 
