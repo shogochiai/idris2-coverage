@@ -1,177 +1,182 @@
 # idris2-coverage
 
-**Type-aware, per-function branch coverage for Idris 2.**
+A pragmatic coverage tool for Idris2, built entirely on top of existing compiler outputs.
 
-idris2-coverage is a coverage analysis tool designed specifically for **dependently typed languages**, starting with Idris 2. It measures *what actually matters* in such languages: **which type-driven branches of which functions have been exercised by your tests**.
-
-This is not line coverage. It is not path coverage in the traditional sense. And it is not a probabilistic heuristic.
-
-It is **coverage over a finite, type-constrained semantic space**, made observable.
+This tool makes **CI-friendly test coverage** feasible for Idris2 projects by
+carefully distinguishing *type-proven unreachable code* from *genuinely reachable but untested code*,
+without modifying the compiler or its coverage semantics.
 
 ---
 
-## Why idris2-coverage exists
+## Motivation
 
-In most mainstream languages, coverage metrics eventually collapse under their own weight:
+Idris2 already has a strong notion of *coverage* and *totality* based on dependent types.
+In theory, this means that many branches are **provably unreachable**.
 
-* Branches explode combinatorially with input size and runtime state.
-* 100% coverage is either meaningless or unattainable.
-* Uncovered areas do not tell you *where to think next*.
+In practice, however, this creates a tension when trying to use coverage in CI:
 
-Dependent types fundamentally change this situation.
+* Some branches can never execute (e.g. `void`, uninhabited patterns)
+* Some branches are reachable but missing tests (real bugs)
+* Some branches appear due to optimizer or compilation artifacts
 
-In Idris 2:
+Treating all of these uniformly makes **100% coverage either meaningless or unattainable**.
 
-* Types *eliminate* impossible states.
-* Pattern matching induces a **finite case tree** per function.
-* The compiler can enumerate this space precisely.
+This project takes a deliberately conservative approach:
 
-idris2-coverage is built on a simple but powerful idea:
-
-> **If the type system already defines the space of meaningful behavior, coverage should be measured *over that space*, and nowhere else.**
+> **Trust Idris2’s notion of impossibility,
+> but do not treat all compiler-emitted “CRASH” cases as equivalent.**
 
 ---
 
-## What does it measure?
+## What this tool does (and does not)
 
-At a high level, idris2-coverage computes the following ratio:
+### ✅ What it does
 
-> **Numerator**: Branches that were *actually executed* during test runs
-> **Denominator**: Branches that *should reasonably be tested by the user*
+* Consumes **existing Idris2 outputs only**
 
-Both sides are computed precisely, not heuristically.
+  * `idris2 --dumpcases`
+  * Chez Scheme profiler (`.ss.html`)
+* Classifies case branches into **practical categories**:
 
-### The denominator: meaningful branches only
+  * Canonical (reachable, should be tested)
+  * Excluded (type-proven unreachable, e.g. `void`)
+  * Bug-like (reachable but missing cases, e.g. `partial`)
+  * Non-semantic (optimizer artifacts)
+  * Unknown (conservatively reported, never excluded)
+* Computes coverage **only over canonical, reachable branches**
+* Produces **transparent reports** suitable for CI
 
-The denominator is constructed from Idris 2's `--dumpcases` output, which enumerates the compiler’s **canonical case tree** for each function.
+### ❌ What it does *not* do
 
-However, not everything the compiler emits should count as user responsibility.
+* It does **not** modify Idris2
+* It does **not** redefine coverage or totality
+* It does **not** attempt to “fix” the compiler
+* It does **not** assume all `CRASH` nodes are semantically meaningful
 
-idris2-coverage systematically excludes:
-
-* **Unreachable / absurd branches** (provably impossible by types)
-* **Optimizer artifacts** (e.g. backend-induced cases such as `Nat` lowering)
-* **Compiler-generated helper functions**
-* **Standard library code**
-* **Test modules and test-only helpers**
-
-These exclusions are *explicit*, versioned, and auditable.
-
-The result is a denominator that represents:
-
-> **“All type-valid branches a user could and should test.”**
-
-### The numerator: what actually happened
-
-On the numerator side, idris2-coverage relies on the **Chez Scheme profiler**, used by the Idris 2 Chez backend.
-
-During test execution:
-
-* Every executed branch is recorded by the runtime profiler.
-* The profiler output is parsed deterministically.
-* Runtime hits are mapped back to Idris-level functions and branches.
-
-No static guessing. No symbolic approximation.
-
-> **Only observed execution counts.**
+This is a **downstream tooling experiment**, not a language change.
 
 ---
 
-## Per-function coverage (this is the key)
+## Core idea
 
-Coverage is computed **per function**, not just globally.
+Coverage is measured in two stages:
 
-This enables something that most coverage tools cannot offer:
+```
+Static (semantic) analysis:
+  --dumpcases
+    → classify branches
+    → identify canonical (reachable) cases
 
-> **You can sort functions by “coverage impact” and immediately see where your attention matters most.**
+Dynamic (runtime) analysis:
+  Chez Scheme profiler
+    → map execution hits to canonical cases
 
-Instead of asking:
+Final coverage:
+  executed_canonical / total_canonical
+```
 
-* “How do I push the total percentage up?”
-
-You can ask:
-
-* “Which function represents the largest untested semantic gap?”
-
-This turns coverage from a vanity metric into a **thinking aid**.
-
----
-
-## Why this only works in a dependently typed language
-
-In languages like Rust, C++, or Java:
-
-* The state space is open-ended.
-* Many branches are runtime-accidental rather than semantically essential.
-* Coverage metrics inevitably reward mechanical test inflation.
-
-In Idris 2:
-
-* The type system already *solves* most combinatorial explosion.
-* Pattern matching over indexed types yields **finite, inspectable spaces**.
-* Impossible cases are first-class and explicit.
-
-idris2-coverage is not fighting the language.
-
-> **It is finishing the job the type system started.**
+Only branches that are *both* semantically reachable *and* executable
+are counted toward the denominator.
 
 ---
 
-## For Idris experts
+## CRASH classification (pragmatic)
 
-idris2-coverage gives you:
+The compiler may emit `CRASH` nodes for different reasons.
+This tool distinguishes them conservatively based on their origin:
 
-* A concrete bridge between **type-level exhaustiveness** and **runtime evidence**
-* A practical interpretation of “semantic coverage”
-* A way to reason about testing that respects dependent pattern matching
+| Origin                   | Example                | Treatment                |
+| ------------------------ | ---------------------- | ------------------------ |
+| Uninhabited / No-clauses | `void`                 | Excluded                 |
+| Partial functions        | `Unhandled input …`    | Reported as bug          |
+| Optimizer artifacts      | `Nat case not covered` | Non-semantic             |
+| Unknown / other          | anything else          | Reported, never excluded |
 
-It pairs naturally with:
-
-* Property-based testing
-* Type-narrowed fuzzing
-* Spec–Test–Implementation parity workflows
-
----
-
-## For non-Idris users / Vibe Coders
-
-You do **not** need to fully understand Idris 2 to benefit from this tool.
-
-You can treat idris2-coverage as:
-
-* A black box that tells you *which functions still need thought*
-* A guardrail that prevents infinite test-writing
-* A guide that keeps your energy focused
-
-You write tests. You run the tool. It tells you where the real gaps are.
-
-> **No coverage golf. No combinatorial despair.**
-
-Just direction.
+Unknown cases are **never** silently dropped.
 
 ---
 
-## What this is *not*
+## Example
 
-* Not line coverage
-* Not statement coverage
-* Not traditional path coverage
-* Not a replacement for thinking
+```idris
+safeHead : NonEmpty a -> a
+safeHead (x :: _) = x
+```
 
-It is a **semantic instrument**, not a checkbox generator.
+Idris2 proves that the empty case is impossible.
+This tool excludes that branch from coverage,
+allowing meaningful coverage metrics without weakening correctness.
 
 ---
 
-## One-sentence summary
+## Output
 
-> **idris2-coverage measures how much of the *type-defined meaning* of your program has actually been exercised — and tells you exactly where to think next.**
+The tool reports:
+
+* Total canonical branches
+* Executed canonical branches
+* Excluded branches (with reasons)
+* Bug-like missing branches
+* Non-semantic artifacts
+* Unknown cases (explicitly listed)
+
+Coverage percentages are always accompanied by a breakdown,
+so users can judge trustworthiness.
+
+---
+
+## Usage
+
+```bash
+idris2-coverage myproject.ipkg \
+  --profile-html path/to/profile.ss.html
+```
+
+Exit codes are CI-friendly:
+
+* `0` — no missing reachable cases
+* `1` — reachable but untested cases found
+* `2` — analysis error (report still produced)
+
+---
+
+## Design principles
+
+* **Conservative by default**
+  When unsure, report — never exclude.
+* **Downstream only**
+  Compiler behavior is observed, not changed.
+* **Transparent accounting**
+  Every exclusion is justified and visible.
+* **Pragmatic correctness**
+  Optimized for real-world CI usage.
 
 ---
 
 ## Status
 
-* Actively used on real Idris 2 codebases
-* Designed to evolve alongside Idris 2 compiler semantics
-* Open to collaboration and scrutiny
+This tool is production-ready for CI usage,
+but intentionally scoped.
 
-If dependent types are the future of reliable software, this is what coverage looks like in that future.
+Future improvements may include better origin tagging
+or additional report formats,
+but correctness is prioritized over completeness.
+
+---
+
+## Feedback
+
+Feedback is very welcome, especially regarding:
+
+* CRASH classification edge cases
+* CI integration experiences
+* Reporting clarity
+
+This project aims to complement Idris2,
+not redefine it.
+
+---
+
+## License
+
+MIT
