@@ -1,1 +1,0 @@
-(parameterize ([optimize-level 3] [compile-file-message #f]) (compile-program "/Users/bob/code/idris2-coverage/build/exec/test_REQ_COV_SRC_002_Test_app/test_REQ_COV_SRC_002_Test.ss"))
