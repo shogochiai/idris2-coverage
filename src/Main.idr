@@ -9,7 +9,7 @@ import Coverage.TestRunner
 import Coverage.Aggregator
 import Coverage.Report
 import Coverage.DumpcasesParser
-import Coverage.SemanticCoverage
+import Coverage.TestCoverage
 import Coverage.UnifiedRunner
 
 import Data.List
@@ -240,16 +240,16 @@ findTestModules ipkg = do
     discoverFromFs : IO (List String)
     discoverFromFs = discoverTestModules (getProjectDir ipkg)
 
-||| Convert CompiledFunction to FunctionSemanticCoverage for target extraction
+||| Convert CompiledFunction to FunctionTestCoverage for target extraction
 ||| Uses 0 as executed count for static-only analysis
-funcToSemanticCoverage : CompiledFunction -> FunctionSemanticCoverage
-funcToSemanticCoverage f = functionToSemanticCoverage f 0
+funcToTestCoverage : CompiledFunction -> FunctionTestCoverage
+funcToTestCoverage f = functionToTestCoverage f 0
 
-||| Convert CompiledFunction to FunctionSemanticCoverage with runtime proportion
+||| Convert CompiledFunction to FunctionTestCoverage with runtime proportion
 ||| Distributes the total executed count proportionally based on function's canonical branches
 ||| This is an approximation; full accuracy would require per-function .ss.html parsing
-funcToSemanticCoverageWithRuntime : Nat -> Nat -> CompiledFunction -> FunctionSemanticCoverage
-funcToSemanticCoverageWithRuntime totalExecuted totalCanonical f =
+funcToTestCoverageWithRuntime : Nat -> Nat -> CompiledFunction -> FunctionTestCoverage
+funcToTestCoverageWithRuntime totalExecuted totalCanonical f =
   let funcCanonical = countCanonicalCases f
       -- Proportional estimate: if project has 8% coverage, each function ~8% covered
       proportion : Double
@@ -257,7 +257,7 @@ funcToSemanticCoverageWithRuntime totalExecuted totalCanonical f =
                    else cast totalExecuted / cast totalCanonical
       estimatedExecuted : Nat
       estimatedExecuted = cast (proportion * cast funcCanonical)
-  in functionToSemanticCoverage f estimatedExecuted
+  in functionToTestCoverage f estimatedExecuted
 
 ||| Run coverage analysis using lib API
 runBranches : Options -> IO ()
@@ -290,7 +290,7 @@ runBranches opts = do
               runtimeCov <- case testModules of
                 [] => pure Nothing
                 mods => do
-                  result <- runTestsWithSemanticCoverage projectDir mods 120
+                  result <- runTestsWithTestCoverage projectDir mods 120
                   case result of
                     Left _ => pure Nothing
                     Right cov => pure $ Just cov
@@ -298,14 +298,14 @@ runBranches opts = do
               -- JSON output mode
               if opts.jsonOutput
                  then do
-                   -- Convert to FunctionSemanticCoverage for target extraction
+                   -- Convert to FunctionTestCoverage for target extraction
                    -- Use runtime executed count if available, otherwise 0
                    let runtimeExecuted = case runtimeCov of
                          Nothing => 0
                          Just cov => cov.executedCanonical
                    -- Distribute executed count proportionally across functions
                    -- (approximation: full data would require per-function .ss.html parsing)
-                   let funcsCov = map (funcToSemanticCoverageWithRuntime runtimeExecuted analysis.totalCanonical) funcs
+                   let funcsCov = map (funcToTestCoverageWithRuntime runtimeExecuted analysis.totalCanonical) funcs
                    let targets = topKTargets opts.topK funcsCov
                    putStrLn $ coverageReportToJson analysis targets
                  else do
@@ -319,7 +319,7 @@ runBranches opts = do
                    case runtimeCov of
                      Nothing => putStrLn "## Runtime Coverage: (no tests found/run)"
                      Just cov => do
-                       let pct = semanticCoveragePercent cov
+                       let pct = testCoveragePercent cov
                        putStrLn $ "## Runtime Coverage (test binary)"
                        putStrLn $ "executed:           " ++ show cov.executedCanonical
                                 ++ "/" ++ show cov.totalCanonical
@@ -338,6 +338,8 @@ runBranches opts = do
                             ++ "   # Nat case - ignore (non-semantic)"
                    putStrLn $ "unknown:            " ++ show analysis.totalUnknown
                             ++ "   # conservative bucket"
+                   putStrLn $ "compiler_generated: " ++ show analysis.totalCompilerGenerated
+                            ++ "   # {csegen:*}, _builtin.*, prim__* (excluded)"
                    putStrLn ""
 
                    -- Show bugs (UnhandledInput) - the main test targets

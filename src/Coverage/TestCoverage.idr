@@ -1,15 +1,15 @@
-||| High-level Semantic Coverage API
+||| High-level Test Coverage API
 |||
 ||| This module provides a simple interface for analyzing Idris2 projects:
 |||
-|||   analyzeProject : String -> IO (Either String SemanticAnalysis)
-|||   analyzeProjectWithHits : String -> List String -> IO (Either String SemanticCoverage)
+|||   analyzeProject : String -> IO (Either String TestAnalysis)
+|||   analyzeProjectWithHits : String -> List String -> IO (Either String TestCoverage)
 |||
 ||| The API handles --dumpcases invocation internally, so users don't need to
 ||| know the non-obvious syntax: idris2 --dumpcases <output> --build <package.ipkg>
 |||
 ||| Issue #5 & #6: This is the recommended entry point for idris2-coverage users.
-module Coverage.SemanticCoverage
+module Coverage.TestCoverage
 
 import Coverage.Types
 import Coverage.DumpcasesParser
@@ -59,12 +59,12 @@ splitIpkgPath path =
 ||| This is the recommended entry point. It:
 ||| 1. Runs idris2 --dumpcases internally with correct syntax
 ||| 2. Parses the output to classify canonical vs impossible cases
-||| 3. Returns SemanticAnalysis with the breakdown
+||| 3. Returns TestAnalysis with the breakdown
 |||
 ||| @ipkgPath - Path to the .ipkg file (e.g., "myproject.ipkg" or "path/to/project/project.ipkg")
-||| @returns  - Either error message or SemanticAnalysis
+||| @returns  - Either error message or TestAnalysis
 public export
-analyzeProject : (ipkgPath : String) -> IO (Either String SemanticAnalysis)
+analyzeProject : (ipkgPath : String) -> IO (Either String TestAnalysis)
 analyzeProject ipkgPath = do
   -- Extract directory and ipkg name
   let (dir, ipkgName) = splitIpkgPath ipkgPath
@@ -102,11 +102,11 @@ analyzeProjectFunctions ipkgPath = do
 |||
 ||| @ipkgPath    - Path to the .ipkg file
 ||| @testModules - List of test module names to run (e.g., ["Tests.AllTests"])
-||| @returns     - Either error or SemanticCoverage with executed counts
+||| @returns     - Either error or TestCoverage with executed counts
 public export
 analyzeProjectWithHits : (ipkgPath : String)
                        -> (testModules : List String)
-                       -> IO (Either String SemanticCoverage)
+                       -> IO (Either String TestCoverage)
 analyzeProjectWithHits ipkgPath testModules = do
   let (projectDir, ipkgName) = splitIpkgPath ipkgPath
 
@@ -123,7 +123,7 @@ analyzeProjectWithHits ipkgPath testModules = do
       case testResult of
         Left testErr => do
           -- Return static analysis only with 0 executed
-          pure $ Right $ MkSemanticCoverage
+          pure $ Right $ MkTestCoverage
             "project"
             analysis.totalCanonical
             analysis.totalExcluded
@@ -132,7 +132,7 @@ analyzeProjectWithHits ipkgPath testModules = do
           -- Step 3: Extract executed count from profiler
           -- Use coveredBranches as approximation for executed canonical cases
           let executed = report.branchCoverage.coveredBranches
-          pure $ Right $ MkSemanticCoverage
+          pure $ Right $ MkTestCoverage
             "project"
             analysis.totalCanonical
             analysis.totalExcluded
@@ -148,8 +148,8 @@ analyzeProjectWithHits ipkgPath testModules = do
 |||   - excluded* fields: safe to exclude from denominator (100% achievable)
 |||   - bug/unknown fields: CI signals (not in denominator, but flagged)
 public export
-record FunctionSemanticCoverage where
-  constructor MkFunctionSemanticCoverage
+record FunctionTestCoverage where
+  constructor MkFunctionTestCoverage
   funcName           : String
   moduleName         : String
 
@@ -167,7 +167,7 @@ record FunctionSemanticCoverage where
   unknownCrash       : Nat    -- conservative bucket (investigate)
 
 public export
-Show FunctionSemanticCoverage where
+Show FunctionTestCoverage where
   show fsc = fsc.funcName ++ ": " ++ show fsc.executedCanonical
           ++ "/" ++ show fsc.totalCanonical
           ++ " (" ++ show (cast {to=Int} fsc.coveragePercent) ++ "%)"
@@ -222,10 +222,10 @@ countExcludedCasesSC : CompiledFunction -> Nat
 countExcludedCasesSC func =
   countExcludedNoClausesSC func + countExcludedOptimizerSC func
 
-||| Convert CompiledFunction to FunctionSemanticCoverage with hits (Pragmatic v1.0)
+||| Convert CompiledFunction to FunctionTestCoverage with hits (Pragmatic v1.0)
 public export
-functionToSemanticCoverage : CompiledFunction -> Nat -> FunctionSemanticCoverage
-functionToSemanticCoverage f executed =
+functionToTestCoverage : CompiledFunction -> Nat -> FunctionTestCoverage
+functionToTestCoverage f executed =
   let canonical = countCanonicalCasesSC f in
 
   let exclNoClauses = countExcludedNoClausesSC f in
@@ -238,7 +238,7 @@ functionToSemanticCoverage f executed =
             then 100.0
             else cast executed / cast canonical * 100.0
 
-  in MkFunctionSemanticCoverage
+  in MkFunctionTestCoverage
        f.fullName
        f.moduleName
        canonical
@@ -308,12 +308,12 @@ severityRatio branchCount executedCount =
      then 1.0e309  -- Infinity
      else cast branchCount / cast executedCount
 
-||| Extract high-impact targets from a FunctionSemanticCoverage
+||| Extract high-impact targets from a FunctionTestCoverage
 ||| Returns 0-3 targets depending on which coverage issues exist
 ||| Now includes executedCount from runtime profiler
 ||| Severity = branchCount / executedCount (Inf if executedCount = 0)
 public export
-targetsFromFunction : FunctionSemanticCoverage -> List HighImpactTarget
+targetsFromFunction : FunctionTestCoverage -> List HighImpactTarget
 targetsFromFunction fsc =
   let -- Calculate untested branches (gap between total and executed)
       untestedBranches = if fsc.totalCanonical > fsc.executedCanonical
@@ -377,7 +377,7 @@ isCompilerGenerated name =
 ||| Get top K high-impact targets from list of functions
 ||| Filters out compiler-generated functions ({csegen:*}, etc.)
 public export
-topKTargets : Nat -> List FunctionSemanticCoverage -> List HighImpactTarget
+topKTargets : Nat -> List FunctionTestCoverage -> List HighImpactTarget
 topKTargets k funcs =
   let allTargets = concatMap targetsFromFunction funcs
       -- Filter out compiler-generated functions
@@ -389,17 +389,17 @@ topKTargets k funcs =
 -- Report Generation
 -- =============================================================================
 
-||| Generate semantic coverage summary as text
-||| Generate semantic coverage summary as text
+||| Generate test coverage summary as text
+||| Generate test coverage summary as text
 ||| Based on dunham's classification from Idris2 community:
 |||   - Excluded (NoClauses): void etc, safe to exclude from denominator
 |||   - Bugs (UnhandledInput): partial code, coverage issue
 |||   - OptimizerArtifacts (Nat case): non-semantic, warn separately
 |||   - Unknown: conservative, never exclude
 public export
-formatSemanticAnalysis : SemanticAnalysis -> String
-formatSemanticAnalysis a = unlines
-  [ "=== Semantic Coverage Report ==="
+formatTestAnalysis : TestAnalysis -> String
+formatTestAnalysis a = unlines
+  [ "=== Test Coverage Report ==="
   , ""
   , "Project Summary:"
   , "  Functions analyzed: " ++ show a.totalFunctions
@@ -411,13 +411,13 @@ formatSemanticAnalysis a = unlines
   , "  Functions with CRASH: " ++ show a.functionsWithCrash
   ]
 
-||| Generate semantic coverage with hits as text
+||| Generate test coverage with hits as text
 public export
-formatSemanticCoverage : SemanticCoverage -> String
-formatSemanticCoverage sc =
-  let pct = semanticCoveragePercent sc
+formatTestCoverage : TestCoverage -> String
+formatTestCoverage sc =
+  let pct = testCoveragePercent sc
   in unlines
-    [ "=== Semantic Coverage Report ==="
+    [ "=== Test Coverage Report ==="
     , ""
     , "Coverage: " ++ show sc.executedCanonical
                ++ "/" ++ show sc.totalCanonical
@@ -429,10 +429,10 @@ formatSemanticCoverage sc =
 -- JSON Output
 -- =============================================================================
 
-||| Generate semantic analysis as JSON
+||| Generate test analysis as JSON
 public export
-semanticAnalysisToJson : SemanticAnalysis -> String
-semanticAnalysisToJson a = unlines
+testAnalysisToJson : TestAnalysis -> String
+testAnalysisToJson a = unlines
   [ "{"
   , "  \"total_functions\": " ++ show a.totalFunctions ++ ","
   , "  \"total_canonical\": " ++ show a.totalCanonical ++ ","
@@ -440,15 +440,16 @@ semanticAnalysisToJson a = unlines
   , "  \"total_bugs\": " ++ show a.totalBugs ++ ","
   , "  \"total_optimizer_artifacts\": " ++ show a.totalOptimizerArtifacts ++ ","
   , "  \"total_unknown\": " ++ show a.totalUnknown ++ ","
+  , "  \"total_compiler_generated\": " ++ show a.totalCompilerGenerated ++ ","
   , "  \"functions_with_crash\": " ++ show a.functionsWithCrash
   , "}"
   ]
 
-||| Generate semantic coverage with hits as JSON
+||| Generate test coverage with hits as JSON
 public export
-semanticCoverageToJson : SemanticCoverage -> String
-semanticCoverageToJson sc =
-  let pct = semanticCoveragePercent sc
+testCoverageToJson : TestCoverage -> String
+testCoverageToJson sc =
+  let pct = testCoveragePercent sc
   in unlines
     [ "{"
     , "  \"function\": \"" ++ sc.funcName ++ "\","
@@ -502,7 +503,7 @@ targetsToJsonArray targets =
 ||| Full coverage report with high impact targets as JSON
 ||| This is the canonical output format for both CLI and lazy core ask
 public export
-coverageReportToJson : SemanticAnalysis -> List HighImpactTarget -> String
+coverageReportToJson : TestAnalysis -> List HighImpactTarget -> String
 coverageReportToJson analysis targets = unlines
   [ "{"
   , "  \"reading_guide\": \"" ++ escapeJson coverageReadingGuide ++ "\","
@@ -512,7 +513,8 @@ coverageReportToJson analysis targets = unlines
   , "    \"total_excluded\": " ++ show analysis.totalExcluded ++ ","
   , "    \"total_bugs\": " ++ show analysis.totalBugs ++ ","
   , "    \"total_optimizer_artifacts\": " ++ show analysis.totalOptimizerArtifacts ++ ","
-  , "    \"total_unknown\": " ++ show analysis.totalUnknown
+  , "    \"total_unknown\": " ++ show analysis.totalUnknown ++ ","
+  , "    \"total_compiler_generated\": " ++ show analysis.totalCompilerGenerated
   , "  },"
   , "  \"high_impact_targets\": " ++ targetsToJsonArray targets
   , "}"

@@ -595,6 +595,8 @@ data BranchClass : Type where
   BCOptimizerNat : BranchClass
   ||| Unknown - other CRASHes, conservative bucket (investigate)
   BCUnknownCrash : String -> BranchClass
+  ||| Compiler-generated - {csegen:N}, _builtin.*, prim__*, excluded from denominator
+  BCCompilerGenerated : BranchClass
 
 public export
 Show BranchClass where
@@ -603,6 +605,7 @@ Show BranchClass where
   show BCBugUnhandledInput  = "bugs"
   show BCOptimizerNat       = "optimizer_artifact"
   show (BCUnknownCrash msg) = "unknown(" ++ msg ++ ")"
+  show BCCompilerGenerated  = "compiler_generated"
 
 public export
 Eq BranchClass where
@@ -611,6 +614,7 @@ Eq BranchClass where
   BCBugUnhandledInput == BCBugUnhandledInput = True
   BCOptimizerNat      == BCOptimizerNat      = True
   BCUnknownCrash m1   == BCUnknownCrash m2   = m1 == m2
+  BCCompilerGenerated == BCCompilerGenerated = True
   _                   == _                   = False
 
 ||| Check if branch should be counted in coverage denominator

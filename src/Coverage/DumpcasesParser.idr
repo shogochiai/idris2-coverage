@@ -16,7 +16,7 @@ import System.File
 %default covering
 
 -- =============================================================================
--- Semantic Coverage Types
+-- Test Coverage Types
 -- =============================================================================
 
 ||| Reason for CRASH in --dumpcases output
@@ -87,6 +87,7 @@ Show CompiledCase where
   show c = "Case(" ++ show c.branchId ++ ", " ++ show c.kind ++ ", " ++ c.pattern ++ ")"
 
 ||| Convert CompiledCase to ClassifiedBranch
+||| For user functions only - compiler-generated functions handled separately
 public export
 toClassifiedBranch : CompiledCase -> ClassifiedBranch
 toClassifiedBranch c = MkClassifiedBranch c.branchId (caseKindToBranchClass c.kind) c.pattern
@@ -97,6 +98,20 @@ toClassifiedBranch c = MkClassifiedBranch c.branchId (caseKindToBranchClass c.ki
     caseKindToBranchClass (NonCanonical CrashUnhandledInput) = BCBugUnhandledInput
     caseKindToBranchClass (NonCanonical CrashOptimizerNat) = BCOptimizerNat
     caseKindToBranchClass (NonCanonical (CrashUnknown msg)) = BCUnknownCrash msg
+
+||| Convert CompiledCase to ClassifiedBranch, marking compiler-generated functions
+public export
+toClassifiedBranchWithFuncName : String -> CompiledCase -> ClassifiedBranch
+toClassifiedBranchWithFuncName funcName c =
+  if isCompilerGeneratedFunc funcName
+     then MkClassifiedBranch c.branchId BCCompilerGenerated c.pattern
+     else toClassifiedBranch c
+  where
+    isCompilerGeneratedFunc : String -> Bool
+    isCompilerGeneratedFunc name =
+         isPrefixOf "{" name
+      || isPrefixOf "_builtin." name
+      || isPrefixOf "prim__" name
 
 ||| Compiled function information extracted from --dumpcases
 public export
@@ -121,32 +136,32 @@ Show CompiledFunction where
     countNonCanonical = length . filter (\c => c.kind /= Canonical)
 
 -- =============================================================================
--- Semantic Coverage Record
+-- Test Coverage Record
 -- =============================================================================
 
-||| Semantic coverage for a function (per Eremondi-Kammar 2025)
+||| Test coverage record for a function
 public export
-record SemanticCoverage where
-  constructor MkSemanticCoverage
+record TestCoverage where
+  constructor MkTestCoverage
   funcName          : String
   totalCanonical    : Nat    -- |{CanonicalCaseId}| - denominator
   totalImpossible   : Nat    -- |{Impossible derived}| - reference value
   executedCanonical : Nat    -- Canonical cases hit at runtime - numerator
 
 public export
-Show SemanticCoverage where
+Show TestCoverage where
   show sc = sc.funcName ++ ": " ++ show sc.executedCanonical
-         ++ "/" ++ show sc.totalCanonical ++ " semantic"
+         ++ "/" ++ show sc.totalCanonical ++ " test coverage"
 
 public export
-Eq SemanticCoverage where
+Eq TestCoverage where
   sc1 == sc2 = sc1.funcName == sc2.funcName
             && sc1.totalCanonical == sc2.totalCanonical
 
-||| Calculate semantic coverage percentage
+||| Calculate test coverage percentage
 public export
-semanticCoveragePercent : SemanticCoverage -> Double
-semanticCoveragePercent sc =
+testCoveragePercent : TestCoverage -> Double
+testCoveragePercent sc =
   if sc.totalCanonical == 0
   then 100.0  -- All impossible cases → 100%
   else cast sc.executedCanonical / cast sc.totalCanonical * 100.0
@@ -155,33 +170,36 @@ semanticCoveragePercent sc =
 -- Summary Statistics
 -- =============================================================================
 
-||| Summary of semantic coverage analysis for a module/project
+||| Summary of test coverage analysis for a module/project
 ||| Breakdown based on dunham's classification:
 |||   - excluded: NoClauses (void etc) - safe to exclude from denominator
 |||   - bugs: UnhandledInput (partial) - genuine coverage issues
 |||   - optimizerArtifacts: OptimizerNat - non-semantic, warn separately
 |||   - unknown: CrashUnknown - never exclude, show in Unknown bucket
+|||   - compilerGenerated: {csegen:N}, _builtin.*, prim__* - excluded from denominator
 public export
-record SemanticAnalysis where
-  constructor MkSemanticAnalysis
+record TestAnalysis where
+  constructor MkTestAnalysis
   totalFunctions       : Nat
   totalCanonical       : Nat   -- Reachable cases (denominator for coverage)
   totalExcluded        : Nat   -- NoClauses (void etc) - excluded from denominator
   totalBugs            : Nat   -- UnhandledInput (partial) - coverage gaps
   totalOptimizerArtifacts : Nat -- Nat case not covered - non-semantic warnings
   totalUnknown         : Nat   -- Unknown CRASHes - never exclude, show separately
+  totalCompilerGenerated : Nat -- {csegen:N}, _builtin.*, prim__* - excluded
   functionsWithCrash   : Nat
 
 public export
-Show SemanticAnalysis where
+Show TestAnalysis where
   show a = unlines
-    [ "Semantic Coverage Analysis:"
+    [ "Test Coverage Analysis:"
     , "  Functions analyzed: " ++ show a.totalFunctions
     , "  Canonical cases (denominator): " ++ show a.totalCanonical
     , "  Excluded (NoClauses): " ++ show a.totalExcluded
     , "  Bugs (UnhandledInput): " ++ show a.totalBugs
     , "  Optimizer artifacts: " ++ show a.totalOptimizerArtifacts
     , "  Unknown CRASHes: " ++ show a.totalUnknown
+    , "  Compiler-generated: " ++ show a.totalCompilerGenerated
     , "  Functions with CRASH: " ++ show a.functionsWithCrash
     ]
 
@@ -405,6 +423,22 @@ public export
 countUnknownCases : CompiledFunction -> Nat
 countUnknownCases f = length $ filter isUnknownCase f.cases
 
+||| Check if function is compiler-generated
+public export
+isCompilerGeneratedFunction : CompiledFunction -> Bool
+isCompilerGeneratedFunction f =
+     isPrefixOf "{" f.fullName
+  || isPrefixOf "_builtin." f.fullName
+  || isPrefixOf "prim__" f.fullName
+
+||| Count compiler-generated cases (entire function's cases count)
+public export
+countCompilerGeneratedCases : CompiledFunction -> Nat
+countCompilerGeneratedCases f =
+  if isCompilerGeneratedFunction f
+     then length f.cases
+     else 0
+
 ||| Legacy: Count not-covered cases (Bug + Unknown)
 countNotCoveredCases : CompiledFunction -> Nat
 countNotCoveredCases f = length $ filter isNotCoveredCase f.cases
@@ -426,15 +460,18 @@ parseDumpcasesFile content =
 
 ||| Aggregate analysis over all functions
 public export
-aggregateAnalysis : List CompiledFunction -> SemanticAnalysis
+aggregateAnalysis : List CompiledFunction -> TestAnalysis
 aggregateAnalysis funcs =
-  MkSemanticAnalysis
+  let -- Filter out compiler-generated functions for canonical counting
+      userFuncs = filter (not . isCompilerGeneratedFunction) funcs
+  in MkTestAnalysis
     (length funcs)
-    (sum $ map countCanonicalCases funcs)
+    (sum $ map countCanonicalCases userFuncs)  -- Only user code in denominator
     (sum $ map countExcludedCases funcs)
     (sum $ map countBugCases funcs)
     (sum $ map countOptimizerArtifacts funcs)
     (sum $ map countUnknownCases funcs)
+    (sum $ map countCompilerGeneratedCases funcs)  -- Track compiler-generated separately
     (length $ filter hasAnyCrash funcs)
 
 -- =============================================================================
@@ -442,10 +479,11 @@ aggregateAnalysis funcs =
 -- =============================================================================
 
 ||| Convert CompiledFunction to StaticFunctionAnalysis
+||| Uses function name to detect compiler-generated functions
 public export
 toStaticFunctionAnalysis : CompiledFunction -> StaticFunctionAnalysis
 toStaticFunctionAnalysis f =
-  MkStaticFunctionAnalysis f.fullName (map toClassifiedBranch f.cases)
+  MkStaticFunctionAnalysis f.fullName (map (toClassifiedBranchWithFuncName f.fullName) f.cases)
 
 ||| Convert list of CompiledFunctions to StaticBranchAnalysis
 ||| This is the entry point for coverage aggregation
@@ -457,11 +495,11 @@ toStaticBranchAnalysis funcs =
       canonCount = length $ filter (\cb => cb.branchClass == BCCanonical) allBranches
   in MkStaticBranchAnalysis funcAnalyses allBranches canonCount
 
-||| Convert CompiledFunction to SemanticCoverage
+||| Convert CompiledFunction to TestCoverage
 public export
-toSemanticCoverage : CompiledFunction -> SemanticCoverage
-toSemanticCoverage f =
-  MkSemanticCoverage
+toTestCoverage : CompiledFunction -> TestCoverage
+toTestCoverage f =
+  MkTestCoverage
     f.fullName
     (length $ filter (\c => c.kind == Canonical) f.cases)
     (length $ filter isExcludedCase f.cases)
@@ -560,12 +598,12 @@ totalExecutedFromMappings = sum . map (.executedCanonical)
 ||| Calculate semantic coverage with runtime hits
 ||| Combines static analysis (--dumpcases) with runtime profiler data
 public export
-semanticCoverageWithHits : List CompiledFunction -> List (Nat, Nat, Nat) -> SemanticCoverage
-semanticCoverageWithHits funcs lineHits =
+testCoverageWithHits : List CompiledFunction -> List (Nat, Nat, Nat) -> TestCoverage
+testCoverageWithHits funcs lineHits =
   let mappings = matchFunctionHits funcs lineHits
       analysis = aggregateAnalysis funcs
       executed = totalExecutedFromMappings mappings
-  in MkSemanticCoverage
+  in MkTestCoverage
        "project"
        analysis.totalCanonical
        analysis.totalExcluded

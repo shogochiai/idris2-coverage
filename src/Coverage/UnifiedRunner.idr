@@ -151,12 +151,12 @@ public export
 record TestCoverageReportExt where
   constructor MkTestCoverageReportExt
   baseReport      : TestCoverageReport
-  semanticCoverage : SemanticCoverage  -- From test binary's --dumpcases
+  testCoverage : TestCoverage  -- From test binary's --dumpcases
 
 public export
 Show TestCoverageReportExt where
-  show r = show r.baseReport ++ " | Semantic: " ++ show r.semanticCoverage.executedCanonical
-        ++ "/" ++ show r.semanticCoverage.totalCanonical
+  show r = show r.baseReport ++ " | Test: " ++ show r.testCoverage.executedCanonical
+        ++ "/" ++ show r.testCoverage.totalCanonical
 
 ||| REQ_COV_UNI_001: Run tests with profiling and return combined report
 ||| REQ_COV_UNI_002: Clean up all temporary files
@@ -286,11 +286,11 @@ runTestsWithCoverage projectDir testModules timeout = do
 ||| @testModules - List of test module names
 ||| @timeout - Max seconds for build+run
 export
-runTestsWithSemanticCoverage : (projectDir : String)
-                              -> (testModules : List String)
-                              -> (timeout : Nat)
-                              -> IO (Either String SemanticCoverage)
-runTestsWithSemanticCoverage projectDir testModules timeout = do
+runTestsWithTestCoverage : (projectDir : String)
+                          -> (testModules : List String)
+                          -> (timeout : Nat)
+                          -> IO (Either String TestCoverage)
+runTestsWithTestCoverage projectDir testModules timeout = do
   case testModules of
     [] => pure $ Left "No test modules specified"
     _ => do
@@ -354,7 +354,7 @@ runTestsWithSemanticCoverage projectDir testModules timeout = do
                 cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
                 removeFileIfExists dumpcasesPath
                 removeFileIfExists absOutputFile
-                pure $ Right $ MkSemanticCoverage "test-binary" analysis.totalCanonical analysis.totalExcluded 0
+                pure $ Right $ MkTestCoverage "test-binary" analysis.totalCanonical analysis.totalExcluded 0
 
           -- Parse profiler output for executed branches
           let branchPoints : List BranchPoint = parseBranchCoverage ssHtml
@@ -365,7 +365,7 @@ runTestsWithSemanticCoverage projectDir testModules timeout = do
           removeFileIfExists dumpcasesPath
           removeFileIfExists absOutputFile
 
-          pure $ Right $ MkSemanticCoverage
+          pure $ Right $ MkTestCoverage
             "test-binary"
             analysis.totalCanonical
             analysis.totalExcluded
