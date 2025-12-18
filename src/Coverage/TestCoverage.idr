@@ -411,14 +411,26 @@ sortTargets = sortBy compareSeverity
         EQ => compare b.branchCount a.branchCount  -- secondary sort by branchCount
         other => other
 
+-- Helper: check if string contains only digits
+isDigitString : String -> Bool
+isDigitString s = length s > 0 && all isDigit (unpack s)
+
+-- Check for patterns like "Module.Func.1234:567:localName"
+-- These are where-clause helpers with source line numbers
+isWhereClauseHelper : String -> Bool
+isWhereClauseHelper n =
+  let parts = forget $ split (== ':') n
+  in length parts >= 2 && any isDigitString (take 2 parts)
+
 ||| Check if function name is compiler-generated
-||| Patterns: {csegen:N}, {eta:N}, _builtin.*, prim__*
+||| Patterns: {csegen:N}, {eta:N}, _builtin.*, prim__*, line-numbered where clauses
 ||| See docs/compiler-generated-functions.md for full reference
 isCompilerGenerated : String -> Bool
 isCompilerGenerated name =
      isPrefixOf "{" name          -- MN names: {csegen:N}, {eta:N}, etc.
   || isPrefixOf "_builtin." name  -- Builtin constructors
   || isPrefixOf "prim__" name     -- Primitive operations
+  || isWhereClauseHelper name     -- Line-numbered local functions
 
 ||| Check if function is from standard library (not user code)
 ||| See docs/compiler-generated-functions.md for full reference
@@ -439,7 +451,7 @@ isTypeConstructor name =
   isSuffixOf "." name && not (isPrefixOf "{" name)
 
 ||| Check if function is test code (should not be coverage target)
-||| Patterns: *.Tests.*, *.AllTests.*, test_*
+||| Patterns: *.Tests.*, *.AllTests.*, test_*, *.test*
 ||| Rationale: Test code tests other code, it shouldn't be a coverage target itself
 export
 isTestCode : String -> Bool
@@ -448,6 +460,15 @@ isTestCode name =
   || isInfixOf ".AllTests." name     -- Module.AllTests.func
   || isSuffixOf ".AllTests" name     -- Module.AllTests (module itself)
   || isPrefixOf "test_" name         -- test_funcName (common naming convention)
+  || hasTestFuncName name            -- Module.testFoo, Module.Module.testBar
+  where
+    -- Check if the final function name (after last '.') starts with "test"
+    hasTestFuncName : String -> Bool
+    hasTestFuncName n =
+      let parts = forget $ split (== '.') n
+      in case last' parts of
+           Nothing => False
+           Just funcPart => isPrefixOf "test" funcPart
 
 ||| Check if function should be excluded from coverage targets (without config)
 shouldExcludeFromTargets : String -> Bool
