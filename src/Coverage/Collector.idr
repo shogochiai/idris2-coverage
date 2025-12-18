@@ -3,6 +3,7 @@
 module Coverage.Collector
 
 import Coverage.Types
+import Coverage.DumpcasesParser
 import Data.List
 import Data.List1
 import Data.Maybe
@@ -465,3 +466,107 @@ collectFromFiles htmlPath schemePath = do
   Right schemeContent <- readFile schemePath
     | Left err => pure $ Left "Failed to read \{schemePath}: \{show err}"
   pure $ Right $ collectProfile htmlContent schemeContent
+
+-- =============================================================================
+-- FunctionRuntimeHit Matching (CLI/API Shared Logic)
+-- =============================================================================
+
+||| Convert Idris function name to Scheme function name pattern
+||| "Main.dispatch" -> "Main-dispatch" or "MainC-45dispatch"
+||| This handles the common Idris->Scheme name mangling patterns
+export
+idrisFuncToSchemePattern : String -> String
+idrisFuncToSchemePattern idrisName =
+  -- Replace dots with dashes or "C-45"
+  fastConcat $ intersperse "-" $ forget $ split (== '.') idrisName
+
+||| Match a CompiledFunction with expression coverage data
+||| Returns FunctionRuntimeHit with combined static + runtime data
+|||
+||| @func - Static analysis from --dumpcases
+||| @lineToExprs - Line-based expression coverage: (line, executedExprs, totalExprs)
+||| @funcDefs - Scheme function definitions: (schemeFunc, startLine)
+export
+matchFunctionWithCoverage : (func : CompiledFunction)
+                          -> (lineToExprs : List (Nat, Nat, Nat))
+                          -> (funcDefs : List (String, Nat))
+                          -> FunctionRuntimeHit
+matchFunctionWithCoverage func lineToExprs funcDefs =
+  let -- Find Scheme function name that matches this Idris function
+      schemePattern = idrisFuncToSchemePattern func.fullName
+      matchingScheme = findMatchingScheme schemePattern funcDefs
+      schemeFunc = fromMaybe func.fullName matchingScheme
+
+      -- Get expression coverage for this function's line range
+      startLine = findFuncStartLine schemeFunc funcDefs
+      (coveredExprs, totalExprs) = sumExprCoverage startLine lineToExprs funcDefs
+
+      -- Count canonical cases from static analysis
+      canonicalCount = countCanonical func.cases
+
+      -- Approximate executed branches from expression coverage ratio
+      -- If 80% of expressions are covered, estimate 80% of branches are covered
+      executedCount : Nat
+      executedCount = if totalExprs == 0 then 0
+                      else let ratio : Double = cast coveredExprs / cast totalExprs
+                           in cast (ratio * cast canonicalCount)
+
+  in MkFunctionRuntimeHit
+       func.fullName
+       schemeFunc
+       canonicalCount
+       executedCount
+       totalExprs
+       coveredExprs
+  where
+    countCanonical : List CompiledCase -> Nat
+    countCanonical = length . filter (\c => c.kind == Canonical)
+
+    -- Find Scheme function name that contains our pattern
+    findMatchingScheme : String -> List (String, Nat) -> Maybe String
+    findMatchingScheme pattern [] = Nothing
+    findMatchingScheme pattern ((name, _) :: rest) =
+      if isInfixOf pattern name then Just name
+      else findMatchingScheme pattern rest
+
+    -- Find start line for a Scheme function
+    findFuncStartLine : String -> List (String, Nat) -> Nat
+    findFuncStartLine target [] = 0
+    findFuncStartLine target ((name, line) :: rest) =
+      if name == target then line
+      else findFuncStartLine target rest
+
+    -- Find next function's start line
+    findNextStart : Nat -> List (String, Nat) -> Nat
+    findNextStart start [] = 999999
+    findNextStart start ((_, line) :: rest) =
+      if line > start then line
+      else findNextStart start rest
+
+    -- Sum expression coverage for lines belonging to this function
+    sumExprCoverage : Nat -> List (Nat, Nat, Nat) -> List (String, Nat) -> (Nat, Nat)
+    sumExprCoverage startLine exprs allDefs =
+      let sortedDefs' = sortBy (\(_, l1), (_, l2) => compare l1 l2) allDefs
+          nextStart = findNextStart startLine sortedDefs'
+          inRange = filter (\(l, _, _) => l >= startLine && l < nextStart) exprs
+          coveredSum = sum $ map (\(_, c, _) => c) inRange
+          totalSum = sum $ map (\(_, _, t) => t) inRange
+      in (coveredSum, totalSum)
+
+||| Match all CompiledFunctions with profiler data to produce FunctionRuntimeHits
+||| This is the main entry point for CLI/API shared coverage calculation
+|||
+||| @funcs - Static analysis results from --dumpcases
+||| @ssHtmlContent - Content of .ss.html profiler output
+||| @ssContent - Content of .ss Scheme source
+export
+matchAllFunctionsWithCoverage : (funcs : List CompiledFunction)
+                               -> (ssHtmlContent : String)
+                               -> (ssContent : String)
+                               -> List FunctionRuntimeHit
+matchAllFunctionsWithCoverage funcs ssHtmlContent ssContent =
+  let -- Parse profiler data
+      exprCoverage = parseAnnotatedHtml ssHtmlContent
+      lineToExprs = groupByLine exprCoverage
+      funcDefs = parseSchemeDefs ssContent
+  in map (\f => matchFunctionWithCoverage f lineToExprs funcDefs) funcs

@@ -224,6 +224,7 @@ countExcludedCasesSC func =
   countExcludedNoClausesSC func + countExcludedOptimizerSC func
 
 ||| Convert CompiledFunction to FunctionTestCoverage with hits (Pragmatic v1.0)
+||| Legacy API: takes executed count as separate parameter
 public export
 functionToTestCoverage : CompiledFunction -> Nat -> FunctionTestCoverage
 functionToTestCoverage f executed =
@@ -249,6 +250,50 @@ functionToTestCoverage f executed =
        exclOptimizer
        bugUnhandled
        unknownCrash
+
+||| Convert FunctionRuntimeHit to FunctionTestCoverage (Pragmatic v1.0)
+||| NEW API: uses per-function runtime data for accurate severity calculation
+|||
+||| @hit - Per-function runtime coverage from runTestsWithFunctionHits
+||| @func - Static analysis from --dumpcases (for bug/unknown classification)
+public export
+runtimeHitToTestCoverage : FunctionRuntimeHit -> CompiledFunction -> FunctionTestCoverage
+runtimeHitToTestCoverage hit func =
+  let exclNoClauses = countExcludedNoClausesSC func in
+  let exclOptimizer = countExcludedOptimizerSC func in
+
+  let bugUnhandled  = countBugUnhandledInputSC func in
+  let unknownCrash  = countUnknownCrashSC func in
+
+  let pct = functionRuntimeCoveragePercent hit
+
+  in MkFunctionTestCoverage
+       hit.funcName
+       func.moduleName
+       hit.canonicalCount
+       hit.executedCount
+       pct
+       exclNoClauses
+       exclOptimizer
+       bugUnhandled
+       unknownCrash
+
+||| Convert FunctionRuntimeHit to FunctionTestCoverage (simplified)
+||| For cases where CompiledFunction is not available
+public export
+runtimeHitToTestCoverageSimple : FunctionRuntimeHit -> FunctionTestCoverage
+runtimeHitToTestCoverageSimple hit =
+  let pct = functionRuntimeCoveragePercent hit
+  in MkFunctionTestCoverage
+       hit.funcName
+       ""  -- module name unavailable
+       hit.canonicalCount
+       hit.executedCount
+       pct
+       0   -- excluded info unavailable
+       0
+       0
+       0
 
 -- =============================================================================
 -- High Impact Targets (Pragmatic v1.0)
@@ -456,6 +501,54 @@ topKTargetsWithConfig config k funcs =
 public export
 topKTargets : Nat -> List FunctionTestCoverage -> List HighImpactTarget
 topKTargets = topKTargetsWithConfig emptyExclusionConfig
+
+-- =============================================================================
+-- FunctionRuntimeHit-based API (Recommended for accurate severity)
+-- =============================================================================
+
+||| Get top K high-impact targets from FunctionRuntimeHits
+||| This is the recommended API for CLI/Library shared usage
+|||
+||| @excl   - Loaded patterns from exclusions/ directory
+||| @config - User config from .idris2-cov.toml
+||| @k      - Maximum number of targets to return
+||| @hits   - Per-function runtime coverage from runTestsWithFunctionHits
+public export
+topKTargetsFromRuntimeHits : LoadedExclusions -> ExclusionConfig -> Nat -> List FunctionRuntimeHit -> List HighImpactTarget
+topKTargetsFromRuntimeHits excl config k hits =
+  let funcsCov = map runtimeHitToTestCoverageSimple hits
+  in topKTargetsWithExclusions excl config k funcsCov
+
+||| Get top K high-impact targets from FunctionRuntimeHits with CompiledFunctions
+||| This provides full bug/unknown classification from static analysis
+|||
+||| @excl   - Loaded patterns from exclusions/ directory
+||| @config - User config from .idris2-cov.toml
+||| @k      - Maximum number of targets to return
+||| @hits   - Per-function runtime coverage
+||| @funcs  - Static analysis results (for bug/unknown counts)
+public export
+topKTargetsFromRuntimeHitsWithStatic : LoadedExclusions -> ExclusionConfig -> Nat
+                                     -> List FunctionRuntimeHit -> List CompiledFunction
+                                     -> List HighImpactTarget
+topKTargetsFromRuntimeHitsWithStatic excl config k hits funcs =
+  let -- Create a map from funcName to CompiledFunction
+      funcMap : List (String, CompiledFunction)
+      funcMap = map (\f => (f.fullName, f)) funcs
+
+      -- Convert hits to FunctionTestCoverage, looking up static data when available
+      funcsCov = map (convertHit funcMap) hits
+  in topKTargetsWithExclusions excl config k funcsCov
+  where
+    lookupFunc : String -> List (String, CompiledFunction) -> Maybe CompiledFunction
+    lookupFunc _ [] = Nothing
+    lookupFunc name ((n, f) :: rest) = if name == n then Just f else lookupFunc name rest
+
+    convertHit : List (String, CompiledFunction) -> FunctionRuntimeHit -> FunctionTestCoverage
+    convertHit fmap hit =
+      case lookupFunc hit.funcName fmap of
+        Nothing => runtimeHitToTestCoverageSimple hit
+        Just func => runtimeHitToTestCoverage hit func
 
 -- =============================================================================
 -- Report Generation

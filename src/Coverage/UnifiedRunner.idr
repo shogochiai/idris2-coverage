@@ -151,13 +151,15 @@ readProjectDepends projectDir = do
 public export
 record TestCoverageReportExt where
   constructor MkTestCoverageReportExt
-  baseReport      : TestCoverageReport
-  testCoverage : TestCoverage  -- From test binary's --dumpcases
+  baseReport     : TestCoverageReport
+  testCoverage   : TestCoverage           -- From test binary's --dumpcases
+  functionHits   : List FunctionRuntimeHit -- Per-function runtime coverage (NEW)
 
 public export
 Show TestCoverageReportExt where
   show r = show r.baseReport ++ " | Test: " ++ show r.testCoverage.executedCanonical
         ++ "/" ++ show r.testCoverage.totalCanonical
+        ++ " | " ++ show (length r.functionHits) ++ " functions"
 
 ||| REQ_COV_UNI_001: Run tests with profiling and return combined report
 ||| REQ_COV_UNI_002: Clean up all temporary files
@@ -371,3 +373,101 @@ runTestsWithTestCoverage projectDir testModules timeout = do
             analysis.totalCanonical
             analysis.totalExcluded
             (cast executed)
+
+-- =============================================================================
+-- Extended Entry Point with Per-Function Runtime Hits
+-- =============================================================================
+
+||| Run tests and return per-function runtime coverage data
+||| This is the recommended API for accurate severity calculation
+|||
+||| @projectDir - Path to project root (containing .ipkg)
+||| @testModules - List of test module names
+||| @timeout - Max seconds for build+run
+export
+runTestsWithFunctionHits : (projectDir : String)
+                          -> (testModules : List String)
+                          -> (timeout : Nat)
+                          -> IO (Either String (List FunctionRuntimeHit))
+runTestsWithFunctionHits projectDir testModules timeout = do
+  case testModules of
+    [] => pure $ Left "No test modules specified"
+    _ => do
+      -- Read project dependencies
+      projectDepends <- readProjectDepends projectDir
+
+      -- Generate unique names
+      uid <- getUniqueId
+      let tempModName = "TempTestRunner_" ++ uid
+      let tempExecName = "temp-test-" ++ uid
+      let tempIdrPath = projectDir ++ "/src/" ++ tempModName ++ ".idr"
+      let tempIpkgPath = projectDir ++ "/" ++ tempExecName ++ ".ipkg"
+      let tempIpkgName = tempExecName ++ ".ipkg"
+      let ssHtmlPath = projectDir ++ "/" ++ tempExecName ++ ".ss.html"
+      let profileHtmlPath = projectDir ++ "/profile.html"
+      let dumpcasesPath = "/tmp/idris2_dumpcases_fh_" ++ uid ++ ".txt"
+      let ssPath = projectDir ++ "/build/exec/" ++ tempExecName ++ "_app/" ++ tempExecName ++ ".ss"
+
+      -- Generate temp runner source
+      let runnerSource = generateTempRunner tempModName testModules
+      Right () <- writeFile tempIdrPath runnerSource
+        | Left err => pure $ Left $ "Failed to write temp runner: " ++ show err
+
+      -- Generate temp .ipkg
+      let allModules = tempModName :: testModules
+      let ipkgContent = generateTempIpkg tempExecName tempModName allModules tempExecName projectDepends
+      Right () <- writeFile tempIpkgPath ipkgContent
+        | Left err => do
+            removeFileIfExists tempIdrPath
+            pure $ Left $ "Failed to write temp ipkg: " ++ show err
+
+      -- Build with --dumpcases on test binary
+      let buildCmd = "cd " ++ projectDir ++ " && idris2 --dumpcases " ++ dumpcasesPath
+                  ++ " --build " ++ tempIpkgName ++ " 2>&1"
+      buildResult <- system buildCmd
+      if buildResult /= 0
+        then do
+          cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
+          removeFileIfExists dumpcasesPath
+          pure $ Left "Build with --dumpcases failed"
+        else do
+          -- Parse --dumpcases output for static analysis
+          Right dumpContent <- readFile dumpcasesPath
+            | Left _ => do
+                cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
+                pure $ Left "Failed to read dumpcases output"
+
+          let funcs = parseDumpcasesFile dumpContent
+
+          -- Run executable with profiler
+          let relExecPath = "./build/exec/" ++ tempExecName
+          _ <- system $ "cd " ++ projectDir ++ " && " ++ relExecPath ++ " 2>&1"
+
+          -- Read .ss.html for profiler hits
+          Right ssHtml <- readFile ssHtmlPath
+            | Left _ => do
+                -- Return static-only data with 0 executed
+                cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
+                removeFileIfExists dumpcasesPath
+                let staticHits = map (\f => MkFunctionRuntimeHit f.fullName f.fullName
+                                      (countCanonical f.cases) 0 0 0) funcs
+                pure $ Right staticHits
+
+          -- Read .ss for function definitions
+          Right ssContent <- readFile ssPath
+            | Left _ => do
+                cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
+                removeFileIfExists dumpcasesPath
+                pure $ Left "Failed to read .ss file"
+
+          -- Match functions with profiler data
+          let functionHits = matchAllFunctionsWithCoverage funcs ssHtml ssContent
+
+          -- Cleanup
+          cleanupTempFiles tempIdrPath tempIpkgPath ssHtmlPath profileHtmlPath
+          removeFileIfExists dumpcasesPath
+
+          pure $ Right functionHits
+  where
+    countCanonical : List CompiledCase -> Nat
+    countCanonical = length . filter (\c => c.kind == Canonical)

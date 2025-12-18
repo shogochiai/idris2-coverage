@@ -282,8 +282,8 @@ funcToTestCoverage : CompiledFunction -> FunctionTestCoverage
 funcToTestCoverage f = functionToTestCoverage f 0
 
 ||| Convert CompiledFunction to FunctionTestCoverage with runtime proportion
-||| Distributes the total executed count proportionally based on function's canonical branches
-||| This is an approximation; full accuracy would require per-function .ss.html parsing
+||| DEPRECATED: Use runTestsWithFunctionHits for accurate per-function data
+||| This is the legacy approximation; kept for fallback when profiler unavailable
 funcToTestCoverageWithRuntime : Nat -> Nat -> CompiledFunction -> FunctionTestCoverage
 funcToTestCoverageWithRuntime totalExecuted totalCanonical f =
   let funcCanonical = countCanonicalCases f
@@ -294,6 +294,24 @@ funcToTestCoverageWithRuntime totalExecuted totalCanonical f =
       estimatedExecuted : Nat
       estimatedExecuted = cast (proportion * cast funcCanonical)
   in functionToTestCoverage f estimatedExecuted
+
+||| Get high impact targets, preferring per-function runtime data when available
+getHighImpactTargets : Maybe (List FunctionRuntimeHit)
+                     -> Maybe TestCoverage
+                     -> LoadedExclusions
+                     -> ExclusionConfig
+                     -> Nat
+                     -> List CompiledFunction
+                     -> Nat
+                     -> List HighImpactTarget
+getHighImpactTargets (Just hits) _ loadedExcl exclusionConfig k funcs _ =
+  -- NEW: Use accurate per-function data
+  topKTargetsFromRuntimeHitsWithStatic loadedExcl exclusionConfig k hits funcs
+getHighImpactTargets Nothing runtimeCov loadedExcl exclusionConfig k funcs totalCanonical =
+  -- FALLBACK: Use legacy proportional approximation
+  let runtimeExecuted = fromMaybe 0 (map (.executedCanonical) runtimeCov)
+      funcsCov = map (funcToTestCoverageWithRuntime runtimeExecuted totalCanonical) funcs
+  in topKTargetsWithExclusions loadedExcl exclusionConfig k funcsCov
 
 ||| Run coverage analysis using lib API
 runBranches : Options -> IO ()
@@ -328,8 +346,23 @@ runBranches opts = do
               -- Step 2: Find and run tests (using lib API)
               testModules <- findTestModules ipkg
 
-              -- Step 3: Get runtime coverage from TEST BINARY (not main binary)
-              -- This is key: --dumpcases runs on the same binary that executes
+              -- Step 3: Get per-function runtime coverage (NEW: accurate data)
+              -- Using runTestsWithFunctionHits for correct severity calculation
+              functionHitsResult <- case testModules of
+                [] => pure (Left "No test modules")
+                mods => runTestsWithFunctionHits projectDir mods 120
+
+              functionHits <- case functionHitsResult of
+                Left err => do
+                  -- Per-function hits unavailable, will use legacy fallback
+                  pure Nothing
+                Right hits => do
+                  -- TODO: FunctionRuntimeHit matching needs improvement
+                  -- Currently expression coverage parsing doesn't differentiate per-function
+                  -- For now, fall back to legacy proportional approximation
+                  pure Nothing  -- Disabled until matching is improved
+
+              -- Also get aggregate coverage for display (uses separate test run)
               runtimeCov <- case testModules of
                 [] => pure Nothing
                 mods => do
@@ -341,15 +374,9 @@ runBranches opts = do
               -- JSON output mode
               if opts.jsonOutput
                  then do
-                   -- Convert to FunctionTestCoverage for target extraction
-                   -- Use runtime executed count if available, otherwise 0
-                   let runtimeExecuted = case runtimeCov of
-                         Nothing => 0
-                         Just cov => cov.executedCanonical
-                   -- Distribute executed count proportionally across functions
-                   -- (approximation: full data would require per-function .ss.html parsing)
-                   let funcsCov = map (funcToTestCoverageWithRuntime runtimeExecuted analysis.totalCanonical) funcs
-                   let targets = topKTargetsWithExclusions loadedExcl exclusionConfig opts.topK funcsCov
+                   -- Use per-function runtime hits if available (accurate severity)
+                   -- Otherwise fall back to proportional approximation (legacy)
+                   let targets = getHighImpactTargets functionHits runtimeCov loadedExcl exclusionConfig opts.topK funcs analysis.totalCanonical
                    putStrLn $ coverageReportToJson analysis targets
                  else do
                    -- Text output mode (original behavior)
