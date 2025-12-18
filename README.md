@@ -17,9 +17,10 @@ idris2-cov --report-leak /path/to/your/project
 
 This one command will:
 1. Show potential leaks + **LLM prompt** to help you verify
-2. Ask where to clone the repo (first time only)
-3. Fork & clone via `gh` CLI
-4. Create a PR automatically
+2. Ask: existing clone location or where to clone?
+3. Fork & clone via `gh` CLI (if needed)
+4. Add patterns to `exclusions/<version>.txt`
+5. Create a PR automatically
 
 **Not sure what's a leak?** The script generates a prompt for Claude/ChatGPT to categorize each function. Press `c` to copy it.
 

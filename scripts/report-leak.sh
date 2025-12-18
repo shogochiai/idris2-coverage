@@ -46,38 +46,91 @@ if [ -f "$REPO_ROOT/idris2-coverage.ipkg" ]; then
   echo "Using local repo: $REPO_ROOT"
   WORK_DIR="$REPO_ROOT"
 else
-  # Not in repo - need to clone
+  # Not in repo - ask user
   echo "Not running from idris2-coverage repo."
   echo ""
-  echo "Where should I clone idris2-coverage?"
-  echo "  (Will create 'idris2-coverage' subdirectory)"
+  echo "Do you already have idris2-coverage cloned somewhere?"
+  echo "  1) Yes, I have an existing clone"
+  echo "  2) No, clone it for me"
+  read -p "Choice [1/2]: " -n 1 -r CLONE_CHOICE
   echo ""
-  read -p "Clone location [~/src]: " CLONE_BASE
-  CLONE_BASE=${CLONE_BASE:-~/src}
-  CLONE_BASE="${CLONE_BASE/#\~/$HOME}"  # Expand ~
 
-  WORK_DIR="$CLONE_BASE/idris2-coverage"
+  if [[ $CLONE_CHOICE == "1" ]]; then
+    # User has existing clone
+    echo ""
+    read -p "Enter path to existing clone: " EXISTING_PATH
+    EXISTING_PATH="${EXISTING_PATH/#\~/$HOME}"  # Expand ~
 
-  if [ -d "$WORK_DIR" ]; then
-    echo "Found existing clone at $WORK_DIR"
+    if [ ! -f "$EXISTING_PATH/idris2-coverage.ipkg" ]; then
+      echo "ERROR: Not a valid idris2-coverage repo: $EXISTING_PATH"
+      echo "       (idris2-coverage.ipkg not found)"
+      exit 1
+    fi
+
+    WORK_DIR="$EXISTING_PATH"
+    echo "Using existing clone: $WORK_DIR"
   else
-    echo "Forking and cloning..."
-    mkdir -p "$CLONE_BASE"
-    cd "$CLONE_BASE"
+    # Need to clone
+    echo ""
 
-    # Fork if not already forked
-    gh repo fork "$UPSTREAM_REPO" --clone=true || {
-      # If fork exists, just clone it
-      GITHUB_USER=$(gh api user -q .login)
-      gh repo clone "$GITHUB_USER/idris2-coverage" || {
-        echo "ERROR: Could not fork/clone repo"
-        exit 1
-      }
-    }
-  fi
+    # Check if user owns the upstream repo
+    GITHUB_USER=$(gh api user -q .login 2>/dev/null || echo "")
+    UPSTREAM_OWNER=$(echo "$UPSTREAM_REPO" | cut -d'/' -f1)
 
-  echo "Working directory: $WORK_DIR"
-fi
+    if [ "$GITHUB_USER" = "$UPSTREAM_OWNER" ]; then
+      echo "You own $UPSTREAM_REPO - will clone directly (no fork needed)."
+      IS_OWNER=true
+    else
+      echo "Will fork $UPSTREAM_REPO to your account."
+      IS_OWNER=false
+    fi
+    echo ""
+
+    read -p "Where should I clone it? [~/src]: " CLONE_BASE
+    CLONE_BASE=${CLONE_BASE:-~/src}
+    CLONE_BASE="${CLONE_BASE/#\~/$HOME}"  # Expand ~
+
+    WORK_DIR="$CLONE_BASE/idris2-coverage"
+
+    echo ""
+    echo "Will clone to: $WORK_DIR"
+    read -p "Continue? [Y/n] " -n 1 -r
+    echo
+    if [[ $REPLY =~ ^[Nn]$ ]]; then
+      echo "Aborted."
+      exit 0
+    fi
+
+    if [ -d "$WORK_DIR" ]; then
+      echo "Found existing clone at $WORK_DIR"
+    else
+      mkdir -p "$CLONE_BASE"
+      cd "$CLONE_BASE"
+
+      if [ "$IS_OWNER" = true ]; then
+        # Owner: clone directly
+        echo "Cloning $UPSTREAM_REPO..."
+        gh repo clone "$UPSTREAM_REPO" || {
+          echo "ERROR: Could not clone repo"
+          exit 1
+        }
+      else
+        # Contributor: fork then clone
+        echo "Forking and cloning..."
+        gh repo fork "$UPSTREAM_REPO" --clone=true || {
+          # If fork already exists, clone it
+          echo "Fork may already exist, trying to clone..."
+          gh repo clone "$GITHUB_USER/idris2-coverage" || {
+            echo "ERROR: Could not fork/clone repo"
+            exit 1
+          }
+        }
+      fi
+    fi
+
+    echo "Working directory: $WORK_DIR"
+  fi  # end of clone choice
+fi  # end of not in repo
 
 cd "$WORK_DIR"
 
@@ -91,13 +144,18 @@ if [ ! -f "./build/exec/idris2-cov" ]; then
   idris2 --build idris2-coverage.ipkg
 fi
 
-IDRIS2_VERSION=$(idris2 --version 2>/dev/null | head -1 || echo "unknown")
+IDRIS2_VERSION_FULL=$(idris2 --version 2>/dev/null | head -1 || echo "unknown")
+# Extract semver (e.g., "0.8.0" from "Idris 2, version 0.8.0-95333b3ad")
+IDRIS2_SEMVER=$(echo "$IDRIS2_VERSION_FULL" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+if [ -z "$IDRIS2_SEMVER" ]; then
+  IDRIS2_SEMVER="unknown"
+fi
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
-BRANCH_NAME="leak-report-$TIMESTAMP"
+BRANCH_NAME="exclusions-$IDRIS2_SEMVER-$TIMESTAMP"
 
 echo ""
 echo "Project: $PROJECT"
-echo "Idris2: $IDRIS2_VERSION"
+echo "Idris2: $IDRIS2_VERSION_FULL (semver: $IDRIS2_SEMVER)"
 echo ""
 
 # Convert PROJECT to absolute path if relative
@@ -136,24 +194,24 @@ done
 echo ""
 
 # Generate LLM prompt for analysis
-LLM_PROMPT=$(cat <<PROMPT_EOF
-I'm using idris2-coverage to analyze my Idris2 project, and the following functions appeared in \`high_impact_targets\` but look like they should be excluded (stdlib, compiler-generated, or dependency code):
+# Note: Using variable substitution in the prompt requires careful quoting
+LLM_PROMPT="I'm using idris2-coverage to analyze my Idris2 project, and the following functions appeared in \`high_impact_targets\` but look like they should be excluded (stdlib, compiler-generated, or dependency code):
 
 \`\`\`
 $LEAKS
 \`\`\`
 
-**Idris2 version**: $IDRIS2_VERSION
+**Idris2 version**: $IDRIS2_VERSION_FULL (semver: $IDRIS2_SEMVER)
 
 Please help me categorize these:
 
 1. **Standard Library** (Prelude.*, Data.*, System.*, Control.*, etc.)
-   - These are from Idris2's base/contrib packages
+   - These are from Idris2 base/contrib packages
 
 2. **Compiler-Generated** ({csegen:N}, {eta:N}, _builtin.*, prim__*)
    - Machine names from optimization passes
 
-3. **Type Constructors** (names ending with '.')
+3. **Type Constructors** (names ending with a period)
    - Auto-generated ADT case trees
 
 4. **False Positives** (actually user code that looks like stdlib)
@@ -161,11 +219,9 @@ Please help me categorize these:
 
 For each function, tell me:
 - Category (1-4 above)
-- If it's a new pattern, what exclusion rule should be added to idris2-coverage
+- If it is a new pattern, what exclusion rule should be added to idris2-coverage
 
-Format your response as a checklist I can use for the PR.
-PROMPT_EOF
-)
+Format your response as a checklist I can use for the PR."
 
 echo "=========================================="
 echo "  STEP 1: Verify these are actual leaks"
@@ -208,56 +264,52 @@ fi
 echo "Creating branch: $BRANCH_NAME"
 git checkout -b "$BRANCH_NAME"
 
-# Generate leak report file
-REPORT_FILE="leak-reports/$TIMESTAMP.md"
-mkdir -p leak-reports
+# Update exclusions file for this Idris2 version
+EXCLUSIONS_FILE="exclusions/$IDRIS2_SEMVER.txt"
 
-cat > "$REPORT_FILE" << EOF
-# Leak Report: $TIMESTAMP
+# Create file if it doesn't exist
+if [ ! -f "$EXCLUSIONS_FILE" ]; then
+  cat > "$EXCLUSIONS_FILE" << INIT_EOF
+# Exclusion patterns specific to Idris2 $IDRIS2_SEMVER
+# Generated: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+INIT_EOF
+fi
 
-## Environment
-- **Idris2 Version**: $IDRIS2_VERSION
-- **Project Analyzed**: $(basename "$PROJECT")
-- **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+# Add header for this contribution
+echo "" >> "$EXCLUSIONS_FILE"
+echo "# Added $(date -u +"%Y-%m-%d") from $(basename "$PROJECT")" >> "$EXCLUSIONS_FILE"
 
-## Detected Leaks
+# Add new patterns (skip duplicates)
+NEW_PATTERNS=0
+echo "$LEAKS" | while read pattern; do
+  if [ -n "$pattern" ]; then
+    # Convert to wildcard pattern if appropriate
+    # e.g., {csegen:123} -> {csegen:*}
+    NORMALIZED=$(echo "$pattern" | sed 's/\({\w*:\)[0-9]*/\1*/g')
 
-The following functions appeared in \`high_impact_targets\` but should be excluded:
+    # Check if already in base.txt or version file
+    if ! grep -qF "$NORMALIZED" "exclusions/base.txt" 2>/dev/null && \
+       ! grep -qF "$NORMALIZED" "$EXCLUSIONS_FILE" 2>/dev/null; then
+      echo "$NORMALIZED" >> "$EXCLUSIONS_FILE"
+      echo "  + $NORMALIZED"
+      NEW_PATTERNS=$((NEW_PATTERNS + 1))
+    fi
+  fi
+done
 
-\`\`\`
-$LEAKS
-\`\`\`
-
-## Suggested Actions
-
-These patterns should be added to \`src/Coverage/DumpcasesParser.idr\`:
-
-### New Compiler-Generated Patterns
-$(echo "$LEAKS" | grep -E '^\{' | sed 's/^/- `/' | sed 's/$/`/' || echo "(none)")
-
-### New Standard Library Modules
-$(echo "$LEAKS" | grep -E '^(Prelude\.|Data\.|System\.|Control\.|Decidable\.|Language\.|Debug\.)' | sed 's/\..*/\./' | sort -u | sed 's/^/- `/' | sed 's/$/`/' || echo "(none)")
-
-### New Builtin/Primitive Patterns
-$(echo "$LEAKS" | grep -E '^(_builtin\.|prim__)' | sed 's/^/- `/' | sed 's/$/`/' || echo "(none)")
-
----
-*Generated by \`scripts/report-leak.sh\`*
-EOF
-
-echo "Generated report: $REPORT_FILE"
+echo ""
+echo "Updated: $EXCLUSIONS_FILE"
 
 # Commit
-git add "$REPORT_FILE"
-git commit -m "$(cat <<EOF
-leak-report: $LEAK_COUNT patterns found with Idris2 $IDRIS2_VERSION
+git add "$EXCLUSIONS_FILE"
+PROJECT_BASENAME=$(basename "$PROJECT")
+git commit -m "exclusions: Add patterns for Idris2 $IDRIS2_SEMVER
 
-Detected exclusion pattern leaks that need to be added to
-src/Coverage/DumpcasesParser.idr
+Detected $LEAK_COUNT exclusion patterns that should be filtered from
+high_impact_targets.
 
-See $REPORT_FILE for details.
-EOF
-)"
+Idris2 version: $IDRIS2_VERSION_FULL
+Project analyzed: $PROJECT_BASENAME"
 
 # Push and create PR
 echo "Pushing branch..."
@@ -266,15 +318,15 @@ git push -u origin "$BRANCH_NAME"
 echo "Creating Pull Request..."
 gh pr create \
   --repo "$UPSTREAM_REPO" \
-  --title "Leak Report: $LEAK_COUNT patterns (Idris2 $IDRIS2_VERSION)" \
-  --body "$(cat <<EOF
-## Summary
+  --title "exclusions($IDRIS2_SEMVER): Add $LEAK_COUNT patterns" \
+  --body "## Summary
 
-Detected **$LEAK_COUNT exclusion pattern leaks** when analyzing with Idris2 $IDRIS2_VERSION.
+Added **$LEAK_COUNT exclusion patterns** to \`exclusions/$IDRIS2_SEMVER.txt\`.
 
-These functions appeared in \`high_impact_targets\` but should be filtered out.
+**Idris2 version**: $IDRIS2_VERSION_FULL
+**Project analyzed**: $PROJECT_BASENAME
 
-## Leaks Found
+## Patterns Added
 
 \`\`\`
 $LEAKS
@@ -286,20 +338,12 @@ If you used Claude/ChatGPT to categorize these, paste the analysis here:
 
 <!-- PASTE LLM ANALYSIS HERE -->
 
-## How to Fix
+## File Changed
 
-Add the new patterns to \`src/Coverage/DumpcasesParser.idr\`:
-- For \`{xyz:N}\` patterns: add to \`isCompilerGenerated\`
-- For \`Prelude.*\` etc: add to \`isStandardLibraryFunction\`
-- For \`prim__*\`: add to \`isCompilerGenerated\`
-
-See [$REPORT_FILE]($REPORT_FILE) for categorized suggestions.
+- \`exclusions/$IDRIS2_SEMVER.txt\` - Version-specific exclusion patterns
 
 ---
-*Generated by \`scripts/report-leak.sh\`*
-*Tip: Use the LLM prompt from the script to help categorize leaks*
-EOF
-)"
+*Generated by \`scripts/report-leak.sh\`*"
 
 echo ""
 echo "Done! PR created."

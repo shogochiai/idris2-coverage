@@ -53,6 +53,7 @@ src/
 └── Coverage/
     ├── Types.idr               # Core types (CaseKind, SemanticCoverage)
     ├── DumpcasesParser.idr     # --dumpcases output parser, ExclusionConfig
+    ├── Exclusions.idr          # Load patterns from exclusions/ directory
     ├── TestCoverage.idr        # High-level coverage API, target filtering
     ├── UnifiedRunner.idr       # Test execution with profiling
     ├── Config.idr              # .idris2-cov.toml parser
@@ -61,6 +62,10 @@ src/
     ├── Report.idr              # Output formatting (JSON, text)
     └── Tests/
         └── AllTests.idr        # Unit tests
+exclusions/
+├── README.md                   # Exclusion patterns documentation
+├── base.txt                    # Patterns common to ALL Idris2 versions
+└── 0.8.0.txt                   # Patterns specific to Idris2 0.8.0
 ```
 
 ## Adding a New Module
