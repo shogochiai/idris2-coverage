@@ -1,98 +1,102 @@
 # idris2-coverage
 
-A pragmatic coverage tool for Idris2, built entirely on top of existing compiler outputs.
+A pragmatic, proof-aware test coverage tool for Idris2.
 
-This tool makes **CI-friendly test coverage** feasible for Idris2 projects by
-carefully distinguishing *type-proven unreachable code* from *genuinely reachable but untested code*,
-without modifying the compiler or its coverage semantics.
+This tool makes **CI-friendly coverage reporting** feasible for Idris2 projects
+by respecting dependent types, proofs, and uninhabited cases,
+rather than counting them naively.
+
+It is implemented entirely as a **downstream tool** on top of existing
+compiler outputs, and does not modify Idris2 itself.
 
 ---
 
 ## Motivation
 
-Idris2 already has a strong notion of *coverage* and *totality* based on dependent types.
-In theory, this means that many branches are **provably unreachable**.
+In dependently typed languages, naive test coverage is often misleading.
 
-In practice, however, this creates a tension when trying to use coverage in CI:
+Many execution paths are *provably unreachable* due to types and proofs,
+while others appear only as artifacts of compilation or optimization.
+Treating all branches uniformly makes coverage either meaningless
+or impossible to satisfy in practice.
 
-* Some branches can never execute (e.g. `void`, uninhabited patterns)
-* Some branches are reachable but missing tests (real bugs)
-* Some branches appear due to optimizer or compilation artifacts
+At the same time, real-world Idris2 projects still need:
 
-Treating all of these uniformly makes **100% coverage either meaningless or unattainable**.
+- CI signals for untested, reachable code
+- Regression protection as code evolves
+- Practical tooling that integrates with existing workflows
 
-This project takes a deliberately conservative approach:
+This project exists to bridge that gap:
 
-> **Trust Idris2’s notion of impossibility,
-> but do not treat all compiler-emitted “CRASH” cases as equivalent.**
+> **Make test coverage meaningful again,  
+> by counting only what can actually happen.**
 
 ---
 
-## What this tool does (and does not)
+## What this tool does
 
-### ✅ What it does
+### ✔ What it does
 
-* Consumes **existing Idris2 outputs only**
+- Consumes **existing Idris2 outputs only**
+  - `idris2 --dumpcases`
+  - Chez Scheme profiler output (`.ss.html`)
+- Distinguishes between different kinds of branches:
+  - *Semantically reachable* branches that should be tested
+  - *Type-proven unreachable* branches (e.g. `void`, uninhabited patterns)
+  - *Genuinely missing* cases (e.g. `partial` functions)
+  - *Non-semantic artifacts* introduced by compilation or optimization
+- Computes coverage **only over reachable, canonical cases**
+- Produces **transparent reports** suitable for CI usage
 
-  * `idris2 --dumpcases`
-  * Chez Scheme profiler (`.ss.html`)
-* Classifies case branches into **practical categories**:
+### ✘ What it does not do
 
-  * Canonical (reachable, should be tested)
-  * Excluded (type-proven unreachable, e.g. `void`)
-  * Bug-like (reachable but missing cases, e.g. `partial`)
-  * Non-semantic (optimizer artifacts)
-  * Unknown (conservatively reported, never excluded)
-* Computes coverage **only over canonical, reachable branches**
-* Produces **transparent reports** suitable for CI
+- It does **not** change Idris2’s coverage checker
+- It does **not** redefine totality or impossibility
+- It does **not** assume all compiler-emitted `CRASH` nodes mean the same thing
+- It does **not** hide uncertainty — unknown cases are always reported
 
-### ❌ What it does *not* do
-
-* It does **not** modify Idris2
-* It does **not** redefine coverage or totality
-* It does **not** attempt to “fix” the compiler
-* It does **not** assume all `CRASH` nodes are semantically meaningful
-
-This is a **downstream tooling experiment**, not a language change.
+This is a **downstream, proof-aware tooling experiment**, not a language change.
 
 ---
 
 ## Core idea
 
-Coverage is measured in two stages:
+Coverage is computed in two layers:
 
 ```
-Static (semantic) analysis:
-  --dumpcases
-    → classify branches
-    → identify canonical (reachable) cases
 
-Dynamic (runtime) analysis:
-  Chez Scheme profiler
-    → map execution hits to canonical cases
+Static (semantic) layer:
+idris2 --dumpcases
+→ classify branches
+→ identify canonical (reachable) cases
+
+Dynamic (runtime) layer:
+Chez Scheme profiler (.ss.html)
+→ map execution hits to canonical cases
 
 Final coverage:
-  executed_canonical / total_canonical
-```
+executed_canonical / total_canonical
 
-Only branches that are *both* semantically reachable *and* executable
-are counted toward the denominator.
+````
+
+Only branches that are both *semantically reachable*
+and *actually executable* are counted.
 
 ---
 
-## CRASH classification (pragmatic)
+## CRASH classification (conservative)
 
-The compiler may emit `CRASH` nodes for different reasons.
-This tool distinguishes them conservatively based on their origin:
+The compiler may emit `CRASH` nodes for multiple reasons.
+This tool classifies them conservatively based on their origin:
 
-| Origin                   | Example                | Treatment                |
-| ------------------------ | ---------------------- | ------------------------ |
-| Uninhabited / No-clauses | `void`                 | Excluded                 |
-| Partial functions        | `Unhandled input …`    | Reported as bug          |
-| Optimizer artifacts      | `Nat case not covered` | Non-semantic             |
-| Unknown / other          | anything else          | Reported, never excluded |
+| Category | Example | Treatment |
+|--------|--------|-----------|
+| Uninhabited / No-clauses | `void` | Excluded |
+| Partial / missing cases | `Unhandled input ...` | Reported as bugs |
+| Optimizer artifacts | `Nat case not covered` | Non-semantic |
+| Unknown | anything else | Reported, never excluded |
 
-Unknown cases are **never** silently dropped.
+Unknown cases are **never silently dropped**.
 
 ---
 
@@ -101,11 +105,11 @@ Unknown cases are **never** silently dropped.
 ```idris
 safeHead : NonEmpty a -> a
 safeHead (x :: _) = x
-```
+````
 
-Idris2 proves that the empty case is impossible.
+The empty case is provably impossible.
 This tool excludes that branch from coverage,
-allowing meaningful coverage metrics without weakening correctness.
+allowing meaningful metrics without weakening correctness.
 
 ---
 
@@ -113,15 +117,14 @@ allowing meaningful coverage metrics without weakening correctness.
 
 The tool reports:
 
-* Total canonical branches
+* Total canonical (reachable) branches
 * Executed canonical branches
 * Excluded branches (with reasons)
-* Bug-like missing branches
+* Bug-like missing cases
 * Non-semantic artifacts
 * Unknown cases (explicitly listed)
 
-Coverage percentages are always accompanied by a breakdown,
-so users can judge trustworthiness.
+Coverage percentages are always accompanied by a breakdown.
 
 ---
 
@@ -142,12 +145,12 @@ Exit codes are CI-friendly:
 
 ## Design principles
 
-* **Conservative by default**
+* **Proof-aware by default**
+  Respect uninhabited cases and impossibility.
+* **Conservative accounting**
   When unsure, report — never exclude.
 * **Downstream only**
-  Compiler behavior is observed, not changed.
-* **Transparent accounting**
-  Every exclusion is justified and visible.
+  Observe compiler behavior; do not modify it.
 * **Pragmatic correctness**
   Optimized for real-world CI usage.
 
@@ -156,11 +159,10 @@ Exit codes are CI-friendly:
 ## Status
 
 This tool is production-ready for CI usage,
-but intentionally scoped.
+with intentionally conservative scope.
 
-Future improvements may include better origin tagging
-or additional report formats,
-but correctness is prioritized over completeness.
+Future improvements may refine classification or reporting,
+but correctness and transparency take priority over completeness.
 
 ---
 
@@ -168,9 +170,9 @@ but correctness is prioritized over completeness.
 
 Feedback is very welcome, especially regarding:
 
-* CRASH classification edge cases
+* Edge cases in CRASH classification
 * CI integration experiences
-* Reporting clarity
+* Report clarity and usability
 
 This project aims to complement Idris2,
 not redefine it.
