@@ -16,9 +16,12 @@ idris2-cov --report-leak /path/to/your/project
 ```
 
 This one command will:
-1. Ask where to clone the repo (first time only)
-2. Fork & clone via `gh` CLI
-3. Detect leaks and create a PR automatically
+1. Show potential leaks + **LLM prompt** to help you verify
+2. Ask where to clone the repo (first time only)
+3. Fork & clone via `gh` CLI
+4. Create a PR automatically
+
+**Not sure what's a leak?** The script generates a prompt for Claude/ChatGPT to categorize each function. Press `c` to copy it.
 
 **That's it. Different codebases × different Idris2 versions = better coverage for everyone.**
 
