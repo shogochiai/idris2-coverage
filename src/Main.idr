@@ -401,11 +401,17 @@ runReportLeak opts = do
   putStrLn $ "Target project: " ++ target
   putStrLn $ "Top N targets: " ++ topN
   putStrLn ""
-  putStrLn "Downloading and running report-leak.sh..."
+  putStrLn "Downloading report-leak.sh..."
   putStrLn ""
-  -- Download and execute the script
-  let cmd = "curl -sL " ++ reportLeakUrl ++ " | bash -s -- \"" ++ target ++ "\" " ++ topN
-  _ <- system cmd
+  -- Download to temp file first, then execute (so stdin works for read prompts)
+  let tmpScript = "/tmp/idris2-cov-report-leak.sh"
+  let downloadCmd = "curl -sL " ++ reportLeakUrl ++ " -o " ++ tmpScript ++ " && chmod +x " ++ tmpScript
+  _ <- system downloadCmd
+  -- Execute the script directly (not via pipe) so stdin works
+  let runCmd = tmpScript ++ " \"" ++ target ++ "\" " ++ topN
+  _ <- system runCmd
+  -- Cleanup
+  _ <- system $ "rm -f " ++ tmpScript
   pure ()
 
 -- =============================================================================
