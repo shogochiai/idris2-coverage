@@ -115,3 +115,139 @@ The tool automatically:
 - **PATCH** (0.0.x): Bug fixes, doc updates
 - **MINOR** (0.x.0): New features, backward compatible
 - **MAJOR** (x.0.0): Breaking changes to CLI or API
+
+---
+
+## Idris2 Version Tracking (Contributor Guide)
+
+### Why This Matters
+
+The exclusion patterns (compiler-generated functions, standard library prefixes, etc.) are **Idris2 version-dependent**. When Idris2 releases a new patch version:
+- New compiler-generated patterns may appear (`{csegen:N}`, `{eta:N}`, etc.)
+- Standard library module names may change
+- New optimizer artifacts may be introduced
+
+**If we don't track these, users will see "leaks" in their coverage reports.**
+
+### Tracking Workflow
+
+When a new Idris2 version is released:
+
+#### 1. Detect New Patterns
+
+```bash
+# Update Idris2 to new version
+pack install-app idris2-0.X.Y
+
+# Rebuild idris2-coverage with new compiler
+idris2 --build idris2-coverage.ipkg
+
+# Run wide analysis on a large project
+./build/exec/idris2-cov --json --top 1000 /path/to/large/project > analysis.json
+
+# Extract potential leaks (non-user functions in targets)
+cat analysis.json | jq '.high_impact_targets[].funcName' | \
+  grep -E '^"(\{|_builtin|prim__|Prelude\.|Data\.|System\.|Control\.)' | \
+  sort -u
+```
+
+#### 2. Identify New Exclusion Patterns
+
+Look for:
+- New `{xyz:N}` patterns (compiler MN names)
+- New `prim__*` primitives
+- New standard library module prefixes
+- New type constructor patterns (ending with `.`)
+
+#### 3. Update Exclusion Logic
+
+Edit [src/Coverage/DumpcasesParser.idr](../src/Coverage/DumpcasesParser.idr):
+
+```idris
+-- Add new patterns to appropriate functions:
+
+isCompilerGenerated : String -> Bool
+isCompilerGenerated name =
+     isPrefixOf "{" name           -- MN names
+  || isPrefixOf "_builtin." name   -- Builtins
+  || isPrefixOf "prim__" name      -- Primitives
+  -- ADD NEW PATTERNS HERE
+
+isStandardLibraryFunction : String -> Bool
+isStandardLibraryFunction name =
+     isPrefixOf "Prelude." name
+  || isPrefixOf "Data." name
+  -- ADD NEW MODULE PREFIXES HERE
+```
+
+#### 4. Document and Release
+
+1. Update [docs/compiler-generated-functions.md](./compiler-generated-functions.md) with new patterns
+2. Add entry to changelog noting Idris2 version compatibility
+3. Release new idris2-coverage version
+
+### Compatibility Matrix
+
+| idris2-coverage | Idris2 Version | Notes |
+|-----------------|----------------|-------|
+| 0.1.x           | 0.7.0          | Initial release |
+
+### Quick Leak Detection Script
+
+Save as `scripts/detect-leaks.sh`:
+
+```bash
+#!/bin/bash
+# Detect potential exclusion leaks after Idris2 update
+
+PROJECT=${1:-.}
+TOP=${2:-1000}
+
+./build/exec/idris2-cov --json --top $TOP "$PROJECT" 2>/dev/null | \
+  jq -r '.high_impact_targets[].funcName' | \
+  grep -E '^(\{|_builtin\.|prim__|Prelude\.|Data\.|System\.|Control\.|Decidable\.|Language\.|Debug\.)' | \
+  sort -u | \
+  while read func; do
+    echo "LEAK: $func"
+  done
+
+LEAK_COUNT=$(./build/exec/idris2-cov --json --top $TOP "$PROJECT" 2>/dev/null | \
+  jq -r '.high_impact_targets[].funcName' | \
+  grep -cE '^(\{|_builtin\.|prim__|Prelude\.|Data\.|System\.|Control\.|Decidable\.|Language\.|Debug\.)')
+
+if [ "$LEAK_COUNT" -gt 0 ]; then
+  echo ""
+  echo "Found $LEAK_COUNT potential leaks. Update exclusion patterns in:"
+  echo "  src/Coverage/DumpcasesParser.idr"
+  exit 1
+else
+  echo "No leaks detected."
+  exit 0
+fi
+```
+
+### CI Integration (Future)
+
+Ideally, set up GitHub Actions to:
+1. Watch for new Idris2 releases
+2. Automatically run leak detection
+3. Open an issue if leaks are found
+
+```yaml
+# .github/workflows/idris2-compat.yml (example)
+name: Idris2 Compatibility Check
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Weekly
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install latest Idris2
+        run: pack install-app idris2
+      - name: Build
+        run: idris2 --build idris2-coverage.ipkg
+      - name: Detect Leaks
+        run: ./scripts/detect-leaks.sh . 1000
+```
