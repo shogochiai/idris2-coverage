@@ -15,6 +15,7 @@ import Coverage.Types
 import Coverage.DumpcasesParser
 import Coverage.Collector
 import Coverage.UnifiedRunner
+import Coverage.Exclusions
 
 import Data.List
 import Data.List1
@@ -411,8 +412,37 @@ shouldExcludeFromTargetsWithConfig config name =
       StrNil => ""
       StrCons c rest => singleton (toUpper c) ++ rest
 
+||| Check if function should be excluded with loaded exclusions + user config
+||| This is the recommended API for library users (e.g., LazyCore)
+|||
+||| @excl    - Loaded patterns from exclusions/ directory (or custom patterns)
+||| @config  - User config from .idris2-cov.toml or passed programmatically
+||| @name    - Function name to check
+public export
+shouldExcludeWithExclusions : LoadedExclusions -> ExclusionConfig -> String -> Bool
+shouldExcludeWithExclusions excl config name =
+     shouldExclude excl name  -- Check exclusions/ patterns first
+  || shouldExcludeFromTargetsWithConfig config name  -- Then check config + hardcoded
+
+||| Get top K high-impact targets with loaded exclusions + config
+||| This is the recommended API for library users (e.g., LazyCore)
+|||
+||| @excl   - Loaded patterns from exclusions/ directory (via loadExclusions)
+||| @config - User config (can be emptyExclusionConfig if not using .idris2-cov.toml)
+||| @k      - Maximum number of targets to return
+||| @funcs  - List of function coverage data
+public export
+topKTargetsWithExclusions : LoadedExclusions -> ExclusionConfig -> Nat -> List FunctionTestCoverage -> List HighImpactTarget
+topKTargetsWithExclusions excl config k funcs =
+  let allTargets = concatMap targetsFromFunction funcs
+      -- Filter out excluded functions using both exclusions/ patterns and config
+      userTargets = filter (not . shouldExcludeWithExclusions excl config . funcName) allTargets
+      sorted = sortTargets userTargets
+  in take k sorted
+
 ||| Get top K high-impact targets from list of functions with config
 ||| Filters out compiler-generated, standard library, type constructors, and user-specified
+||| Note: This uses hardcoded patterns only. For full exclusion support, use topKTargetsWithExclusions
 public export
 topKTargetsWithConfig : ExclusionConfig -> Nat -> List FunctionTestCoverage -> List HighImpactTarget
 topKTargetsWithConfig config k funcs =

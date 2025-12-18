@@ -12,6 +12,7 @@ import Coverage.DumpcasesParser
 import Coverage.TestCoverage
 import Coverage.UnifiedRunner
 import Coverage.Config
+import Coverage.Exclusions
 
 import Data.List
 import Data.List1
@@ -180,6 +181,33 @@ getTimestamp = do
   let secs = seconds t
   pure $ "timestamp:" ++ show secs
 
+||| Get Idris2 version string by running `idris2 --version`
+getIdris2Version : IO String
+getIdris2Version = do
+  let tmpFile = "/tmp/idris2-version.txt"
+  _ <- system $ "idris2 --version > " ++ tmpFile ++ " 2>&1"
+  Right content <- readFile tmpFile
+    | Left _ => pure "unknown"
+  pure $ trim content
+
+||| Load exclusion patterns from idris2-coverage's exclusions/ directory
+||| Falls back to empty exclusions if not found
+loadExclusionsForCLI : IO LoadedExclusions
+loadExclusionsForCLI = do
+  idris2Ver <- getIdris2Version
+  -- Try to find exclusions/ directory relative to executable or current dir
+  -- For installed packages, this would be in the package data dir
+  -- For development, it's in the repo root
+  let tryPaths = ["./exclusions", "../exclusions", "exclusions"]
+  findAndLoad tryPaths idris2Ver
+  where
+    findAndLoad : List String -> String -> IO LoadedExclusions
+    findAndLoad [] ver = pure emptyExclusions
+    findAndLoad (p :: ps) ver = do
+      Right _ <- readFile (p ++ "/base.txt")
+        | Left _ => findAndLoad ps ver
+      loadExclusions p ver
+
 ||| Format bug function line for report
 formatBugLine : CompiledFunction -> String
 formatBugLine f = "- " ++ f.fullName ++ ": UnhandledInput"
@@ -285,6 +313,9 @@ runBranches opts = do
           ipkgDepends <- readProjectDepends projectDir
           exclusionConfig <- loadConfigWithDepends projectDir ipkgDepends
 
+          -- Load exclusion patterns from exclusions/ directory
+          loadedExcl <- loadExclusionsForCLI
+
           -- Step 1: Static analysis (always)
           staticResult <- analyzeProjectFunctions ipkg
           case staticResult of
@@ -318,7 +349,7 @@ runBranches opts = do
                    -- Distribute executed count proportionally across functions
                    -- (approximation: full data would require per-function .ss.html parsing)
                    let funcsCov = map (funcToTestCoverageWithRuntime runtimeExecuted analysis.totalCanonical) funcs
-                   let targets = topKTargetsWithConfig exclusionConfig opts.topK funcsCov
+                   let targets = topKTargetsWithExclusions loadedExcl exclusionConfig opts.topK funcsCov
                    putStrLn $ coverageReportToJson analysis targets
                  else do
                    -- Text output mode (original behavior)
