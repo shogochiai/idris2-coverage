@@ -99,19 +99,28 @@ toClassifiedBranch c = MkClassifiedBranch c.branchId (caseKindToBranchClass c.ki
     caseKindToBranchClass (NonCanonical CrashOptimizerNat) = BCOptimizerNat
     caseKindToBranchClass (NonCanonical (CrashUnknown msg)) = BCUnknownCrash msg
 
-||| Convert CompiledCase to ClassifiedBranch, marking compiler-generated functions
+||| Convert CompiledCase to ClassifiedBranch, marking excluded functions
+||| Excludes: compiler-generated, standard library, type constructors
 public export
 toClassifiedBranchWithFuncName : String -> CompiledCase -> ClassifiedBranch
 toClassifiedBranchWithFuncName funcName c =
-  if isCompilerGeneratedFunc funcName
+  if shouldExcludeFunc funcName
      then MkClassifiedBranch c.branchId BCCompilerGenerated c.pattern
      else toClassifiedBranch c
   where
-    isCompilerGeneratedFunc : String -> Bool
-    isCompilerGeneratedFunc name =
-         isPrefixOf "{" name
-      || isPrefixOf "_builtin." name
-      || isPrefixOf "prim__" name
+    shouldExcludeFunc : String -> Bool
+    shouldExcludeFunc name =
+         isPrefixOf "{" name          -- Compiler-generated MN names
+      || isPrefixOf "_builtin." name  -- Builtin constructors
+      || isPrefixOf "prim__" name     -- Primitive operations
+      || isPrefixOf "Prelude." name   -- Standard library
+      || isPrefixOf "Data." name
+      || isPrefixOf "System." name
+      || isPrefixOf "Control." name
+      || isPrefixOf "Decidable." name
+      || isPrefixOf "Language." name
+      || isPrefixOf "Debug." name
+      || (isSuffixOf "." name && not (isPrefixOf "{" name))  -- Type constructors
 
 ||| Compiled function information extracted from --dumpcases
 public export
@@ -170,13 +179,51 @@ testCoveragePercent sc =
 -- Summary Statistics
 -- =============================================================================
 
+||| Configuration for additional exclusion patterns
+||| Can be loaded from .idris2-cov.toml
+public export
+record ExclusionConfig where
+  constructor MkExclusionConfig
+  ||| Additional module prefixes to exclude (e.g., ["MyLib.Internal"])
+  modulePrefixes : List String
+  ||| Package names to exclude (mapped to Module. prefix)
+  packageNames   : List String
+
+public export
+emptyExclusionConfig : ExclusionConfig
+emptyExclusionConfig = MkExclusionConfig [] []
+
+public export
+Show ExclusionConfig where
+  show c = "ExclusionConfig(prefixes=" ++ show c.modulePrefixes
+        ++ ", packages=" ++ show c.packageNames ++ ")"
+
 ||| Summary of test coverage analysis for a module/project
 ||| Breakdown based on dunham's classification:
 |||   - excluded: NoClauses (void etc) - safe to exclude from denominator
 |||   - bugs: UnhandledInput (partial) - genuine coverage issues
 |||   - optimizerArtifacts: OptimizerNat - non-semantic, warn separately
 |||   - unknown: CrashUnknown - never exclude, show in Unknown bucket
-|||   - compilerGenerated: {csegen:N}, _builtin.*, prim__* - excluded from denominator
+|||   - excluded breakdown: compiler-generated, stdlib, type constructors, deps
+public export
+record ExclusionBreakdown where
+  constructor MkExclusionBreakdown
+  compilerGenerated : Nat  -- {csegen:N}, _builtin.*, prim__*
+  standardLibrary   : Nat  -- Prelude.*, System.*, Data.*, etc.
+  typeConstructors  : Nat  -- Names ending with "."
+  dependencies      : Nat  -- User-specified packages/modules
+
+public export
+Show ExclusionBreakdown where
+  show b = "compiler=" ++ show b.compilerGenerated
+        ++ ", stdlib=" ++ show b.standardLibrary
+        ++ ", typeCtor=" ++ show b.typeConstructors
+        ++ ", deps=" ++ show b.dependencies
+
+public export
+totalExcludedFromDenom : ExclusionBreakdown -> Nat
+totalExcludedFromDenom b = b.compilerGenerated + b.standardLibrary + b.typeConstructors + b.dependencies
+
 public export
 record TestAnalysis where
   constructor MkTestAnalysis
@@ -186,7 +233,7 @@ record TestAnalysis where
   totalBugs            : Nat   -- UnhandledInput (partial) - coverage gaps
   totalOptimizerArtifacts : Nat -- Nat case not covered - non-semantic warnings
   totalUnknown         : Nat   -- Unknown CRASHes - never exclude, show separately
-  totalCompilerGenerated : Nat -- {csegen:N}, _builtin.*, prim__* - excluded
+  exclusionBreakdown   : ExclusionBreakdown  -- Detailed breakdown of excluded functions
   functionsWithCrash   : Nat
 
 public export
@@ -199,9 +246,17 @@ Show TestAnalysis where
     , "  Bugs (UnhandledInput): " ++ show a.totalBugs
     , "  Optimizer artifacts: " ++ show a.totalOptimizerArtifacts
     , "  Unknown CRASHes: " ++ show a.totalUnknown
-    , "  Compiler-generated: " ++ show a.totalCompilerGenerated
+    , "  Excluded from denominator:"
+    , "    Compiler-generated: " ++ show a.exclusionBreakdown.compilerGenerated
+    , "    Standard library: " ++ show a.exclusionBreakdown.standardLibrary
+    , "    Type constructors: " ++ show a.exclusionBreakdown.typeConstructors
     , "  Functions with CRASH: " ++ show a.functionsWithCrash
     ]
+
+||| Legacy accessor for backward compatibility
+public export
+totalCompilerGenerated : TestAnalysis -> Nat
+totalCompilerGenerated a = totalExcludedFromDenom a.exclusionBreakdown
 
 -- =============================================================================
 -- CrashReason Detection from CRASH Messages
@@ -431,11 +486,87 @@ isCompilerGeneratedFunction f =
   || isPrefixOf "_builtin." f.fullName
   || isPrefixOf "prim__" f.fullName
 
+||| Check if function is from standard library (external dependency)
+||| See docs/compiler-generated-functions.md for reference
+public export
+isStandardLibraryFunction : CompiledFunction -> Bool
+isStandardLibraryFunction f =
+     isPrefixOf "Prelude." f.fullName
+  || isPrefixOf "Data." f.fullName
+  || isPrefixOf "System." f.fullName
+  || isPrefixOf "Control." f.fullName
+  || isPrefixOf "Decidable." f.fullName
+  || isPrefixOf "Language." f.fullName
+  || isPrefixOf "Debug." f.fullName
+
+||| Check if function is a type constructor (ends with '.')
+||| These are auto-generated ADT constructor case trees
+public export
+isTypeConstructorFunction : CompiledFunction -> Bool
+isTypeConstructorFunction f =
+  isSuffixOf "." f.fullName && not (isPrefixOf "{" f.fullName)
+
+||| Check if function should be excluded from coverage denominator
+||| Includes: compiler-generated, standard library, type constructors
+public export
+shouldExcludeFunction : CompiledFunction -> Bool
+shouldExcludeFunction f =
+     isCompilerGeneratedFunction f
+  || isStandardLibraryFunction f
+  || isTypeConstructorFunction f
+
+||| Check if function matches user-configured exclusion patterns
+||| Checks module prefixes and package names (capitalized as Module.)
+public export
+isDependencyFunction : ExclusionConfig -> CompiledFunction -> Bool
+isDependencyFunction config f =
+  let name = f.fullName
+      -- Check direct module prefixes
+      matchesPrefix = any (\p => isPrefixOf p name) config.modulePrefixes
+      -- Check package names (capitalized: "mypackage" -> "Mypackage.")
+      capitalizeFirst : String -> String
+      capitalizeFirst s = case strM s of
+        StrNil => ""
+        StrCons c rest => singleton (toUpper c) ++ rest
+      matchesPackage = any (\pkg => isPrefixOf (capitalizeFirst pkg ++ ".") name) config.packageNames
+  in matchesPrefix || matchesPackage
+
+||| Check if function should be excluded with user config
+public export
+shouldExcludeFunctionWithConfig : ExclusionConfig -> CompiledFunction -> Bool
+shouldExcludeFunctionWithConfig config f =
+     shouldExcludeFunction f
+  || isDependencyFunction config f
+
 ||| Count compiler-generated cases (entire function's cases count)
 public export
 countCompilerGeneratedCases : CompiledFunction -> Nat
 countCompilerGeneratedCases f =
   if isCompilerGeneratedFunction f
+     then length f.cases
+     else 0
+
+||| Count standard library cases
+public export
+countStandardLibraryCases : CompiledFunction -> Nat
+countStandardLibraryCases f =
+  if isStandardLibraryFunction f
+     then length f.cases
+     else 0
+
+||| Count type constructor cases
+public export
+countTypeConstructorCases : CompiledFunction -> Nat
+countTypeConstructorCases f =
+  if isTypeConstructorFunction f
+     then length f.cases
+     else 0
+
+||| Count dependency/user-excluded cases
+public export
+countDependencyCases : ExclusionConfig -> CompiledFunction -> Nat
+countDependencyCases config f =
+  if isDependencyFunction config f && not (shouldExcludeFunction f)
      then length f.cases
      else 0
 
@@ -458,12 +589,18 @@ parseDumpcasesFile content =
   let ls = lines content
   in mapMaybe analyzeFunction ls
 
-||| Aggregate analysis over all functions
+||| Aggregate analysis over all functions with exclusion config
 public export
-aggregateAnalysis : List CompiledFunction -> TestAnalysis
-aggregateAnalysis funcs =
-  let -- Filter out compiler-generated functions for canonical counting
-      userFuncs = filter (not . isCompilerGeneratedFunction) funcs
+aggregateAnalysisWithConfig : ExclusionConfig -> List CompiledFunction -> TestAnalysis
+aggregateAnalysisWithConfig config funcs =
+  let -- Filter out all excluded functions
+      userFuncs = filter (not . shouldExcludeFunctionWithConfig config) funcs
+      -- Count excluded cases by category
+      compGenCases = sum (map countCompilerGeneratedCases funcs)
+      stdlibCases  = sum (map countStandardLibraryCases funcs)
+      typeCtorCases = sum (map countTypeConstructorCases funcs)
+      depCases = sum (map (countDependencyCases config) funcs)
+      breakdown = MkExclusionBreakdown compGenCases stdlibCases typeCtorCases depCases
   in MkTestAnalysis
     (length funcs)
     (sum $ map countCanonicalCases userFuncs)  -- Only user code in denominator
@@ -471,8 +608,13 @@ aggregateAnalysis funcs =
     (sum $ map countBugCases funcs)
     (sum $ map countOptimizerArtifacts funcs)
     (sum $ map countUnknownCases funcs)
-    (sum $ map countCompilerGeneratedCases funcs)  -- Track compiler-generated separately
+    breakdown
     (length $ filter hasAnyCrash funcs)
+
+||| Aggregate analysis over all functions (default empty config)
+public export
+aggregateAnalysis : List CompiledFunction -> TestAnalysis
+aggregateAnalysis = aggregateAnalysisWithConfig emptyExclusionConfig
 
 -- =============================================================================
 -- Conversion to StaticBranchAnalysis (for aggregation)

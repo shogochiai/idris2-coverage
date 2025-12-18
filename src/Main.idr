@@ -11,6 +11,7 @@ import Coverage.Report
 import Coverage.DumpcasesParser
 import Coverage.TestCoverage
 import Coverage.UnifiedRunner
+import Coverage.Config
 
 import Data.List
 import Data.List1
@@ -272,12 +273,17 @@ runBranches opts = do
           -- Get timestamp
           ts <- getTimestamp
 
+          -- Load exclusion config from .idris2-cov.toml (if exists)
+          let projectDir = getProjectDir ipkg
+          ipkgDepends <- readProjectDepends projectDir
+          exclusionConfig <- loadConfigWithDepends projectDir ipkgDepends
+
           -- Step 1: Static analysis (always)
           staticResult <- analyzeProjectFunctions ipkg
           case staticResult of
             Left err => putStrLn $ "Error: " ++ err
             Right funcs => do
-              let analysis = aggregateAnalysis funcs
+              let analysis = aggregateAnalysisWithConfig exclusionConfig funcs
               let bugFuncs = filter (\f => countBugCases f > 0) funcs
               let unknownFuncs = filter (\f => countUnknownCases f > 0) funcs
 
@@ -286,7 +292,6 @@ runBranches opts = do
 
               -- Step 3: Get runtime coverage from TEST BINARY (not main binary)
               -- This is key: --dumpcases runs on the same binary that executes
-              let projectDir = getProjectDir ipkg
               runtimeCov <- case testModules of
                 [] => pure Nothing
                 mods => do
@@ -306,7 +311,7 @@ runBranches opts = do
                    -- Distribute executed count proportionally across functions
                    -- (approximation: full data would require per-function .ss.html parsing)
                    let funcsCov = map (funcToTestCoverageWithRuntime runtimeExecuted analysis.totalCanonical) funcs
-                   let targets = topKTargets opts.topK funcsCov
+                   let targets = topKTargetsWithConfig exclusionConfig opts.topK funcsCov
                    putStrLn $ coverageReportToJson analysis targets
                  else do
                    -- Text output mode (original behavior)
@@ -338,8 +343,15 @@ runBranches opts = do
                             ++ "   # Nat case - ignore (non-semantic)"
                    putStrLn $ "unknown:            " ++ show analysis.totalUnknown
                             ++ "   # conservative bucket"
-                   putStrLn $ "compiler_generated: " ++ show analysis.totalCompilerGenerated
-                            ++ "   # {csegen:*}, _builtin.*, prim__* (excluded)"
+                   putStrLn "## Excluded from Denominator:"
+                   putStrLn $ "  compiler_generated: " ++ show analysis.exclusionBreakdown.compilerGenerated
+                            ++ "   # {csegen:*}, _builtin.*, prim__*"
+                   putStrLn $ "  standard_library:   " ++ show analysis.exclusionBreakdown.standardLibrary
+                            ++ "   # Prelude.*, System.*, Data.*"
+                   putStrLn $ "  type_constructors:  " ++ show analysis.exclusionBreakdown.typeConstructors
+                            ++ "   # names ending with '.'"
+                   putStrLn $ "  dependencies:       " ++ show analysis.exclusionBreakdown.dependencies
+                            ++ "   # user-specified packages"
                    putStrLn ""
 
                    -- Show bugs (UnhandledInput) - the main test targets

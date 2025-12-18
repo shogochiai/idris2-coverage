@@ -374,16 +374,58 @@ isCompilerGenerated name =
   || isPrefixOf "_builtin." name  -- Builtin constructors
   || isPrefixOf "prim__" name     -- Primitive operations
 
-||| Get top K high-impact targets from list of functions
-||| Filters out compiler-generated functions ({csegen:*}, etc.)
+||| Check if function is from standard library (not user code)
+||| See docs/compiler-generated-functions.md for full reference
+isStandardLibrary : String -> Bool
+isStandardLibrary name =
+     isPrefixOf "Prelude." name
+  || isPrefixOf "Data." name
+  || isPrefixOf "System." name
+  || isPrefixOf "Control." name
+  || isPrefixOf "Decidable." name
+  || isPrefixOf "Language." name
+  || isPrefixOf "Debug." name
+
+||| Check if name is a type constructor (ends with '.')
+||| These are auto-generated ADT constructor case trees
+isTypeConstructor : String -> Bool
+isTypeConstructor name =
+  isSuffixOf "." name && not (isPrefixOf "{" name)
+
+||| Check if function should be excluded from coverage targets (without config)
+shouldExcludeFromTargets : String -> Bool
+shouldExcludeFromTargets name =
+     isCompilerGenerated name
+  || isStandardLibrary name
+  || isTypeConstructor name
+
+||| Check if function should be excluded with user config
+shouldExcludeFromTargetsWithConfig : ExclusionConfig -> String -> Bool
+shouldExcludeFromTargetsWithConfig config name =
+  let matchesDep = any (\p => isPrefixOf p name) config.modulePrefixes
+                || any (\pkg => isPrefixOf (capitalizeFirst pkg ++ ".") name) config.packageNames
+  in shouldExcludeFromTargets name || matchesDep
+  where
+    capitalizeFirst : String -> String
+    capitalizeFirst s = case strM s of
+      StrNil => ""
+      StrCons c rest => singleton (toUpper c) ++ rest
+
+||| Get top K high-impact targets from list of functions with config
+||| Filters out compiler-generated, standard library, type constructors, and user-specified
 public export
-topKTargets : Nat -> List FunctionTestCoverage -> List HighImpactTarget
-topKTargets k funcs =
+topKTargetsWithConfig : ExclusionConfig -> Nat -> List FunctionTestCoverage -> List HighImpactTarget
+topKTargetsWithConfig config k funcs =
   let allTargets = concatMap targetsFromFunction funcs
-      -- Filter out compiler-generated functions
-      userTargets = filter (not . isCompilerGenerated . funcName) allTargets
+      -- Filter out non-user functions
+      userTargets = filter (not . shouldExcludeFromTargetsWithConfig config . funcName) allTargets
       sorted = sortTargets userTargets
   in take k sorted
+
+||| Get top K high-impact targets (default empty config)
+public export
+topKTargets : Nat -> List FunctionTestCoverage -> List HighImpactTarget
+topKTargets = topKTargetsWithConfig emptyExclusionConfig
 
 -- =============================================================================
 -- Report Generation
@@ -440,7 +482,12 @@ testAnalysisToJson a = unlines
   , "  \"total_bugs\": " ++ show a.totalBugs ++ ","
   , "  \"total_optimizer_artifacts\": " ++ show a.totalOptimizerArtifacts ++ ","
   , "  \"total_unknown\": " ++ show a.totalUnknown ++ ","
-  , "  \"total_compiler_generated\": " ++ show a.totalCompilerGenerated ++ ","
+  , "  \"exclusion_breakdown\": {"
+  , "    \"compiler_generated\": " ++ show a.exclusionBreakdown.compilerGenerated ++ ","
+  , "    \"standard_library\": " ++ show a.exclusionBreakdown.standardLibrary ++ ","
+  , "    \"type_constructors\": " ++ show a.exclusionBreakdown.typeConstructors ++ ","
+  , "    \"dependencies\": " ++ show a.exclusionBreakdown.dependencies
+  , "  },"
   , "  \"functions_with_crash\": " ++ show a.functionsWithCrash
   , "}"
   ]
@@ -514,7 +561,12 @@ coverageReportToJson analysis targets = unlines
   , "    \"total_bugs\": " ++ show analysis.totalBugs ++ ","
   , "    \"total_optimizer_artifacts\": " ++ show analysis.totalOptimizerArtifacts ++ ","
   , "    \"total_unknown\": " ++ show analysis.totalUnknown ++ ","
-  , "    \"total_compiler_generated\": " ++ show analysis.totalCompilerGenerated
+  , "    \"exclusion_breakdown\": {"
+  , "      \"compiler_generated\": " ++ show analysis.exclusionBreakdown.compilerGenerated ++ ","
+  , "      \"standard_library\": " ++ show analysis.exclusionBreakdown.standardLibrary ++ ","
+  , "      \"type_constructors\": " ++ show analysis.exclusionBreakdown.typeConstructors ++ ","
+  , "      \"dependencies\": " ++ show analysis.exclusionBreakdown.dependencies
+  , "    }"
   , "  },"
   , "  \"high_impact_targets\": " ++ targetsToJsonArray targets
   , "}"

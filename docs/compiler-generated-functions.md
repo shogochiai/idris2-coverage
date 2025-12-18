@@ -51,6 +51,42 @@ Format: `{prefix:N}` where N is an incrementing index.
 |---------|-------------|
 | `prim__*` | Primitive operations (e.g., `prim__sub_Integer`) |
 
+### Standard Library Modules (External Dependencies)
+
+These modules are from Idris2's `base` or `contrib` packages, not user code.
+They should be **excluded from coverage targets** since you cannot test their internals.
+
+| Module Prefix | Description |
+|---------------|-------------|
+| `Prelude.` | Core prelude (Show, Types, etc.) |
+| `Data.` | Data structures (String, List, etc.) |
+| `System.` | System interaction (File, Directory, Clock, etc.) |
+| `Control.` | Control flow abstractions |
+| `Decidable.` | Decidability proofs |
+| `Language.` | Language reflection |
+| `Debug.` | Debug utilities |
+
+Examples from real analysis:
+- `System.File.ReadWrite.readLinesOnto` (21 branches)
+- `System.Directory.nextDirEntry` (19 branches)
+- `Data.String.with block in parsePositive,parsePosTrimmed` (18 branches)
+- `Prelude.Show.showLitChar` (14 branches)
+- `Prelude.Types.rangeFromTo` (13 branches)
+
+### Type Constructors (Non-Function Entries)
+
+Functions ending with `.` are **data constructor case trees**, not user-defined logic.
+The trailing dot indicates auto-generated ADT constructor handling.
+
+| Pattern | Example | Description |
+|---------|---------|-------------|
+| `Module.Type.` | `Shared.Types.Ask.` | Constructor for `Ask` type |
+| `Module.Type.` | `Shared.Types.Ledger.` | Constructor for `Ledger` type |
+| `Module.Type.` | `Shared.Signal.Policy.` | Constructor for `Policy` type |
+| `Module.Type.` | `Coverage.DumpcasesParser.` | Constructor cases |
+
+These are compiler-generated case trees for pattern matching on ADTs.
+
 ## Current Handling
 
 ### High Impact Targets Filter
@@ -60,9 +96,23 @@ Compiler-generated functions are **filtered out** from `high_impact_targets`:
 ```idris
 isCompilerGenerated : String -> Bool
 isCompilerGenerated name =
-     isPrefixOf "{" name
-  || isPrefixOf "_builtin." name
-  || isPrefixOf "prim__" name
+     isPrefixOf "{" name           -- MN names: {csegen:N}, {eta:N}, etc.
+  || isPrefixOf "_builtin." name   -- Builtin constructors
+  || isPrefixOf "prim__" name      -- Primitive operations
+
+isStandardLibrary : String -> Bool
+isStandardLibrary name =
+     isPrefixOf "Prelude." name
+  || isPrefixOf "Data." name
+  || isPrefixOf "System." name
+  || isPrefixOf "Control." name
+  || isPrefixOf "Decidable." name
+  || isPrefixOf "Language." name
+  || isPrefixOf "Debug." name
+
+isTypeConstructor : String -> Bool
+isTypeConstructor name =
+  isSuffixOf "." name && not (isPrefixOf "{" name)
 ```
 
 This means:

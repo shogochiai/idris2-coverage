@@ -127,6 +127,7 @@ parseIpkgDepends content =
          in map trim $ forget $ split (== ',') pkgStr
 
 ||| Read depends from project's ipkg file
+public export
 readProjectDepends : String -> IO (List String)
 readProjectDepends projectDir = do
   -- Try common ipkg names
