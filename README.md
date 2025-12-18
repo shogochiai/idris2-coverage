@@ -166,6 +166,20 @@ but correctness and transparency take priority over completeness.
 
 ---
 
+## Versioning
+
+This project follows 0.x versioning.
+Breaking changes may occur between minor versions.
+
+---
+
+## Maintenance policy
+
+This is a small, pragmatic tool developed primarily for the author's own use.
+Issues and pull requests are welcome, but maintenance is best-effort.
+
+---
+
 ## Feedback
 
 Feedback is very welcome, especially regarding:
