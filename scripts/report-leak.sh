@@ -4,25 +4,109 @@
 #
 # Prerequisites:
 #   - gh CLI installed and authenticated
-#   - Fork of idris2-coverage cloned locally
+#   - jq installed
 #
 # This script:
-#   1. Detects leaks in high_impact_targets
-#   2. Creates a branch with the leak report
-#   3. Opens a PR to the main repo
+#   1. Clones/uses idris2-coverage repo
+#   2. Detects leaks in high_impact_targets
+#   3. Creates a branch with the leak report
+#   4. Opens a PR to the main repo
 
 set -e
 
+UPSTREAM_REPO="shogochiai/idris2-coverage"
 PROJECT=${1:-.}
 TOP=${2:-1000}
+
+echo "=== idris2-coverage Leak Reporter ==="
+echo ""
+
+# Check prerequisites
+if ! command -v gh &> /dev/null; then
+  echo "ERROR: 'gh' CLI not found. Install it: https://cli.github.com/"
+  exit 1
+fi
+
+if ! command -v jq &> /dev/null; then
+  echo "ERROR: 'jq' not found. Install it: brew install jq (macOS) or apt install jq (Linux)"
+  exit 1
+fi
+
+if ! gh auth status &> /dev/null; then
+  echo "ERROR: Not authenticated with GitHub. Run: gh auth login"
+  exit 1
+fi
+
+# Determine repo location
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Check if we're in the idris2-coverage repo
+if [ -f "$REPO_ROOT/idris2-coverage.ipkg" ]; then
+  echo "Using local repo: $REPO_ROOT"
+  WORK_DIR="$REPO_ROOT"
+else
+  # Not in repo - need to clone
+  echo "Not running from idris2-coverage repo."
+  echo ""
+  echo "Where should I clone idris2-coverage?"
+  echo "  (Will create 'idris2-coverage' subdirectory)"
+  echo ""
+  read -p "Clone location [~/src]: " CLONE_BASE
+  CLONE_BASE=${CLONE_BASE:-~/src}
+  CLONE_BASE="${CLONE_BASE/#\~/$HOME}"  # Expand ~
+
+  WORK_DIR="$CLONE_BASE/idris2-coverage"
+
+  if [ -d "$WORK_DIR" ]; then
+    echo "Found existing clone at $WORK_DIR"
+  else
+    echo "Forking and cloning..."
+    mkdir -p "$CLONE_BASE"
+    cd "$CLONE_BASE"
+
+    # Fork if not already forked
+    gh repo fork "$UPSTREAM_REPO" --clone=true || {
+      # If fork exists, just clone it
+      GITHUB_USER=$(gh api user -q .login)
+      gh repo clone "$GITHUB_USER/idris2-coverage" || {
+        echo "ERROR: Could not fork/clone repo"
+        exit 1
+      }
+    }
+  fi
+
+  echo "Working directory: $WORK_DIR"
+fi
+
+cd "$WORK_DIR"
+
+# Make sure we're on main and up to date
+git checkout main 2>/dev/null || git checkout master 2>/dev/null
+git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || true
+
+# Build if needed
+if [ ! -f "./build/exec/idris2-cov" ]; then
+  echo "Building idris2-cov..."
+  idris2 --build idris2-coverage.ipkg
+fi
+
 IDRIS2_VERSION=$(idris2 --version 2>/dev/null | head -1 || echo "unknown")
 TIMESTAMP=$(date +%Y%m%d-%H%M%S)
 BRANCH_NAME="leak-report-$TIMESTAMP"
 
-echo "=== idris2-coverage Leak Reporter ==="
+echo ""
 echo "Project: $PROJECT"
 echo "Idris2: $IDRIS2_VERSION"
 echo ""
+
+# Convert PROJECT to absolute path if relative
+if [[ "$PROJECT" != /* ]]; then
+  PROJECT="$(cd "$OLDPWD" 2>/dev/null && cd "$PROJECT" && pwd)" || {
+    echo "ERROR: Cannot find project: $PROJECT"
+    exit 1
+  }
+fi
 
 # Run analysis and capture only JSON
 JSON_OUTPUT=$(./build/exec/idris2-cov --json --top $TOP "$PROJECT" 2>&1 | \
@@ -72,7 +156,7 @@ cat > "$REPORT_FILE" << EOF
 
 ## Environment
 - **Idris2 Version**: $IDRIS2_VERSION
-- **Project Analyzed**: $PROJECT
+- **Project Analyzed**: $(basename "$PROJECT")
 - **Date**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 
 ## Detected Leaks
@@ -120,6 +204,7 @@ git push -u origin "$BRANCH_NAME"
 
 echo "Creating Pull Request..."
 gh pr create \
+  --repo "$UPSTREAM_REPO" \
   --title "Leak Report: $LEAK_COUNT patterns (Idris2 $IDRIS2_VERSION)" \
   --body "$(cat <<EOF
 ## Summary
@@ -149,5 +234,7 @@ EOF
 )"
 
 echo ""
-echo "Done! PR created. Return to main branch:"
-echo "  git checkout main"
+echo "Done! PR created."
+echo ""
+echo "Return to main branch:"
+echo "  cd $WORK_DIR && git checkout main"

@@ -42,9 +42,10 @@ record Options where
   showUncovered : Bool           -- --uncovered flag for branches
   jsonOutput   : Bool            -- --json flag for machine-readable output
   topK         : Nat             -- --top N for high impact targets (default 10)
+  reportLeak   : Bool            -- --report-leak flag to contribute
 
 defaultOptions : Options
-defaultOptions = MkOptions JSON Nothing Nothing (Just ".") [] False False Nothing False False 10
+defaultOptions = MkOptions JSON Nothing Nothing (Just ".") [] False False Nothing False False 10 False
 
 -- =============================================================================
 -- Argument Parsing
@@ -81,6 +82,10 @@ parseArgs ("-o" :: path :: rest) opts =
   parseArgs rest ({ outputPath := Just path } opts)
 parseArgs ("--run-tests" :: pattern :: rest) opts =
   parseArgs rest ({ runTests := Just pattern } opts)
+parseArgs ("--report-leak" :: rest) opts =
+  parseArgs rest ({ reportLeak := True } opts)
+parseArgs ("contribute" :: rest) opts =
+  parseArgs rest ({ reportLeak := True } opts)
 parseArgs (arg :: rest) opts =
   -- Accept directory or ipkg as target
   if isSuffixOf ".idr" arg
@@ -115,6 +120,8 @@ OPTIONS:
   --uncovered       Only show functions with bugs/unknown CRASHes
   --json            Output JSON with high_impact_targets and reading_guide
   --top N           Number of high impact targets to include (default: 10)
+  --report-leak     Found stdlib/compiler funcs in targets? Report them!
+                    Creates a PR automatically. Your help keeps this fresh.
 
 BRANCH CLASSIFICATION (per dunham):
   canonical:    Reachable branches (test denominator)
@@ -370,6 +377,38 @@ runBranches opts = do
                        traverse_ (putStrLn . formatUnknownLine) unknownFuncs
 
 -- =============================================================================
+-- Report Leak Command
+-- =============================================================================
+
+reportLeakUrl : String
+reportLeakUrl = "https://raw.githubusercontent.com/shogochiai/idris2-coverage/main/scripts/report-leak.sh"
+
+||| Run the report-leak flow
+runReportLeak : Options -> IO ()
+runReportLeak opts = do
+  putStrLn "=== idris2-coverage Leak Reporter ==="
+  putStrLn ""
+  putStrLn "This will help you report exclusion pattern leaks."
+  putStrLn "The script will:"
+  putStrLn "  1. Fork & clone idris2-coverage (if needed)"
+  putStrLn "  2. Detect leaks in your project"
+  putStrLn "  3. Create a PR automatically"
+  putStrLn ""
+  putStrLn "Prerequisites: gh CLI (https://cli.github.com/) and jq"
+  putStrLn ""
+  let target = fromMaybe "." opts.targetPath
+  let topN = show opts.topK
+  putStrLn $ "Target project: " ++ target
+  putStrLn $ "Top N targets: " ++ topN
+  putStrLn ""
+  putStrLn "Downloading and running report-leak.sh..."
+  putStrLn ""
+  -- Download and execute the script
+  let cmd = "curl -sL " ++ reportLeakUrl ++ " | bash -s -- \"" ++ target ++ "\" " ++ topN
+  _ <- system cmd
+  pure ()
+
+-- =============================================================================
 -- Main
 -- =============================================================================
 
@@ -382,4 +421,6 @@ main = do
      then putStrLn helpText
      else if opts.showVersion
              then putStrLn versionText
-             else runBranches opts  -- branches is the default (and only) command
+             else if opts.reportLeak
+                     then runReportLeak opts
+                     else runBranches opts  -- branches is the default command
