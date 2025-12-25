@@ -48,6 +48,7 @@ idris2 --build idris2-coverage.ipkg
 
 | Document | Description |
 |----------|-------------|
+| [Vibe Coding](docs/VIBE_CODING.md) | Why this enables complex software development |
 | [Getting Started](docs/GETTING_STARTED.md) | Installation and first steps |
 | [User Guide](docs/USER_GUIDE.md) | Full CLI reference and configuration |
 | [FAQ](docs/FAQ.md) | Common questions and answers |
