@@ -28,15 +28,15 @@ jobs:
 
       - name: Install pack
         run: |
-          bash -c "$(curl -fsSL https://raw.githubusercontent.com/stefan-hoeck/idris2-pack/main/install.bash)"
-          echo "$HOME/.pack/bin" >> $GITHUB_PATH
+          echo "chez" | bash -c "$(curl -fsSL https://raw.githubusercontent.com/stefan-hoeck/idris2-pack/main/install.bash)"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
 
       - name: Build
         run: |
-          export PATH="$HOME/.pack/bin:$PATH"
+          export PATH="$HOME/.local/bin:$PATH"
           pack build idris2-coverage.ipkg
 
       - name: Test
         run: |
-          export PATH="$HOME/.pack/bin:$PATH"
+          export PATH="$HOME/.local/bin:$PATH"
           ./build/exec/idris2-cov .
