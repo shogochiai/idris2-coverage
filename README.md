@@ -2,7 +2,7 @@
 
 A pragmatic, proof-aware test coverage tool for Idris2.
 
-[![CI](https://img.shields.io/badge/CI-ready-green)]()
+[![CI](https://github.com/shogochiai/idris2-coverage/actions/workflows/ci.yml/badge.svg)](https://github.com/shogochiai/idris2-coverage/actions/workflows/ci.yml)
 [![Idris2](https://img.shields.io/badge/Idris2-0.7.0+-blue)]()
 
 ## What is this?
