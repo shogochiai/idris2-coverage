@@ -26,7 +26,14 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install chezscheme
 
-      - name: Install pack
+      - name: Install pack (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          echo "chezscheme" | bash -c "$(curl -fsSL https://raw.githubusercontent.com/stefan-hoeck/idris2-pack/main/install.bash)"
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+
+      - name: Install pack (macOS)
+        if: runner.os == 'macOS'
         run: |
           echo "chez" | bash -c "$(curl -fsSL https://raw.githubusercontent.com/stefan-hoeck/idris2-pack/main/install.bash)"
           echo "$HOME/.local/bin" >> $GITHUB_PATH
