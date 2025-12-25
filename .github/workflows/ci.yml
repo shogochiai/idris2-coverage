@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Chez Scheme (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y chezscheme
+
+      - name: Install Chez Scheme (macOS)
+        if: runner.os == 'macOS'
+        run: brew install chezscheme
+
+      - name: Install pack
+        run: |
+          bash -c "$(curl -fsSL https://raw.githubusercontent.com/stefan-hoeck/idris2-pack/main/install.bash)"
+          echo "$HOME/.pack/bin" >> $GITHUB_PATH
+
+      - name: Build
+        run: |
+          export PATH="$HOME/.pack/bin:$PATH"
+          pack build idris2-coverage.ipkg
+
+      - name: Test
+        run: |
+          export PATH="$HOME/.pack/bin:$PATH"
+          ./build/exec/idris2-cov .
