@@ -188,15 +188,18 @@ record ExclusionConfig where
   modulePrefixes : List String
   ||| Package names to exclude (mapped to Module. prefix)
   packageNames   : List String
+  ||| Specific function names to exclude (exact match, e.g., ["Module.func"])
+  functionNames  : List String
 
 public export
 emptyExclusionConfig : ExclusionConfig
-emptyExclusionConfig = MkExclusionConfig [] []
+emptyExclusionConfig = MkExclusionConfig [] [] []
 
 public export
 Show ExclusionConfig where
   show c = "ExclusionConfig(prefixes=" ++ show c.modulePrefixes
-        ++ ", packages=" ++ show c.packageNames ++ ")"
+        ++ ", packages=" ++ show c.packageNames
+        ++ ", functions=" ++ show c.functionNames ++ ")"
 
 ||| Summary of test coverage analysis for a module/project
 ||| Breakdown based on dunham's classification:
@@ -531,7 +534,9 @@ isDependencyFunction config f =
         StrNil => ""
         StrCons c rest => singleton (toUpper c) ++ rest
       matchesPackage = any (\pkg => isPrefixOf (capitalizeFirst pkg ++ ".") name) config.packageNames
-  in matchesPrefix || matchesPackage
+      -- Check explicit function names (exact match)
+      matchesFunction = any (\fn => fn == name) config.functionNames
+  in matchesPrefix || matchesPackage || matchesFunction
 
 ||| Check if function should be excluded with user config
 public export

@@ -41,6 +41,7 @@ parseStringArray s =
 ||| [exclusions]
 ||| module_prefixes = ["Foo.Internal", "Generated"]
 ||| packages = ["mylib", "otherlib"]
+||| functions = ["Module.untestableFunc", "Other.sideEffectOnly"]
 ||| ```
 covering
 public export
@@ -49,7 +50,8 @@ parseConfigFile content =
   let ls = lines content
       prefixes = findArrayValue "module_prefixes" ls
       packages = findArrayValue "packages" ls
-  in MkExclusionConfig prefixes packages
+      functions = findArrayValue "functions" ls
+  in MkExclusionConfig prefixes packages functions
   where
     -- Drop leading '=' and whitespace
     dropEqualsAndTrim : String -> String

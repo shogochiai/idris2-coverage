@@ -15,6 +15,8 @@ import Coverage.TestHint
 import Coverage.Aggregator
 import Coverage.TestRunner
 import Coverage.UnifiedRunner
+import Coverage.Config
+import Coverage.DumpcasesParser
 import Data.List
 import Data.String
 import Data.Maybe
@@ -829,6 +831,40 @@ test_MGL_004 = do
   pure $ result == "PreludeC-45EqOrd-C-61C-61"
 
 -- =============================================================================
+-- Config Function Exclusion Tests (CFG_001-003)
+-- =============================================================================
+
+||| REQ_COV_CFG_001: ExclusionConfig with function names
+covering
+test_CFG_001 : IO Bool
+test_CFG_001 = do
+  let config = MkExclusionConfig [] [] ["Module.func1", "Other.func2"]
+  pure $ config.functionNames == ["Module.func1", "Other.func2"]
+
+||| REQ_COV_CFG_002: parseConfigFile with functions array
+covering
+test_CFG_002 : IO Bool
+test_CFG_002 = do
+  let toml = """
+[exclusions]
+module_prefixes = ["Foo.Internal"]
+packages = ["mylib"]
+functions = ["Module.untestable", "Other.sideEffect"]
+"""
+  let config = parseConfigFile toml
+  pure $ config.functionNames == ["Module.untestable", "Other.sideEffect"]
+      && config.modulePrefixes == ["Foo.Internal"]
+      && config.packageNames == ["mylib"]
+
+||| REQ_COV_CFG_003: emptyExclusionConfig has empty functionNames
+covering
+test_CFG_003 : IO Bool
+test_CFG_003 = do
+  pure $ emptyExclusionConfig.functionNames == []
+      && emptyExclusionConfig.modulePrefixes == []
+      && emptyExclusionConfig.packageNames == []
+
+-- =============================================================================
 -- All Tests
 -- =============================================================================
 
@@ -927,6 +963,9 @@ allTests =
   , ("REQ_COV_MGL_002", test_MGL_002)
   , ("REQ_COV_MGL_003", test_MGL_003)
   , ("REQ_COV_MGL_004", test_MGL_004)
+  , ("REQ_COV_CFG_001", test_CFG_001)
+  , ("REQ_COV_CFG_002", test_CFG_002)
+  , ("REQ_COV_CFG_003", test_CFG_003)
   ]
 
 -- =============================================================================

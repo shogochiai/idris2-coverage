@@ -483,6 +483,7 @@ shouldExcludeFromTargetsWithConfig : ExclusionConfig -> String -> Bool
 shouldExcludeFromTargetsWithConfig config name =
   let matchesDep = any (\p => isPrefixOf p name) config.modulePrefixes
                 || any (\pkg => isPrefixOf (capitalizeFirst pkg ++ ".") name) config.packageNames
+                || any (\fn => fn == name) config.functionNames
   in shouldExcludeFromTargets name || matchesDep
   where
     capitalizeFirst : String -> String
