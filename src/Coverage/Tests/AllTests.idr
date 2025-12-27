@@ -355,17 +355,27 @@ test_SRC_001 = do
 covering
 test_SRC_002 : IO Bool
 test_SRC_002 = do
-  let source = "module Test\n\npublic export\nMyType : Type\nMyType = Int"
+  -- Spec: SourceAnalyzer SHALL determine line_start and line_end for each function
+  -- analyzeSource records signature line as lineStart (line 4 = "add : Int -> Int")
+  let source = "module Test\n\nexport\nadd : Int -> Int\nadd x = x + 1"
   let exports = analyzeSource source
-  pure $ length exports >= 0
+  case exports of
+    [f] => pure (f.lineStart == 4 && f.lineEnd == 4 && f.name == "add")
+    _   => pure False
 
 ||| REQ_COV_SRC_003
 covering
 test_SRC_003 : IO Bool
 test_SRC_003 = do
-  let source = "module A\n\nimport B\nimport C\n\nexport\nfoo : Int"
+  -- Spec: SourceAnalyzer SHALL extract export visibility
+  -- Test both exported and non-exported functions
+  let source = "module A\n\nexport\nfoo : Int\nfoo = 1\n\nbar : Int\nbar = 2"
   let funcs = analyzeSource source
-  pure $ True -- Import detection tested separately
+  -- Only exported function 'foo' should be returned
+  pure $ length funcs == 1 &&
+         case head' funcs of
+           Just f => f.exported && f.name == "foo"
+           Nothing => False
 
 ||| REQ_COV_SRC_004
 covering
@@ -407,32 +417,41 @@ test_COL_001 = do
 covering
 test_COL_002 : IO Bool
 test_COL_002 = do
+  -- Spec: Collector SHALL extract function name and line number from Scheme defs
   let defs = parseSchemeDefs "(define Main-add (lambda (x y) (+ x y)))"
-  pure $ length defs >= 1
+  case defs of
+    [(name, lineNum)] => pure (name == "Main-add" && lineNum == 1)
+    _ => pure False
 
 ||| REQ_COV_COL_003
 covering
 test_COL_003 : IO Bool
 test_COL_003 = do
+  -- Spec: Collector SHALL parse module-prefixed names correctly
   let defs = parseSchemeDefs "(define PreludeC-45Show-u--show_Show_Int (lambda (x) x))"
-  pure $ length defs >= 1
+  case defs of
+    [(name, _)] => pure (name == "PreludeC-45Show-u--show_Show_Int")
+    _ => pure False
 
 ||| REQ_COV_COL_004
 covering
 test_COL_004 : IO Bool
 test_COL_004 = do
+  -- Spec: Collector SHALL handle HTML with zero coverage correctly
   let html = "<table><tr><td class=pc0>uncovered</td></tr></table>"
   let hits = parseProfileHtml html
-  pure $ True -- Zero coverage is valid
+  -- Zero-coverage rows don't have "line N (count)" format, so no hits returned
+  pure $ length hits == 0
 
 ||| REQ_COV_COL_005: parseProfileHtml with non-numeric line
 covering
 test_COL_005 : IO Bool
 test_COL_005 = do
-  -- "line abc" should fail to parse
+  -- Spec: Collector SHALL handle non-numeric line gracefully
   let html = "<td class=pc1>line abc (5)</td>"
   let hits = parseProfileHtml html
-  pure $ True -- Should handle gracefully
+  -- Non-numeric line number should result in no parsed hits
+  pure $ length hits == 0
 
 ||| REQ_COV_COL_006: parseProfileHtml without "line" keyword
 covering
@@ -629,17 +648,21 @@ test_HNT_001 = do
 covering
 test_HNT_002 : IO Bool
 test_HNT_002 = do
+  -- Spec: TestHint SHALL generate exhaustive path hints for Either type
   let analyzed = analyzeFunction "handle" "Either Error a -> IO ()"
   let hints = exhaustivePathHints defaultConfig analyzed
-  pure $ True
+  -- Either should suggest Left and Right cases
+  pure $ length hints >= 2
 
 ||| REQ_COV_HNT_003
 covering
 test_HNT_003 : IO Bool
 test_HNT_003 = do
+  -- Spec: TestHint SHALL generate hints for List traversal
   let analyzed = analyzeFunction "traverse" "List a -> IO (List b)"
   let hints = exhaustivePathHints defaultConfig analyzed
-  pure $ True
+  -- List should suggest empty and non-empty cases
+  pure $ length hints >= 2
 
 ||| REQ_COV_HNT_004
 covering
@@ -792,10 +815,14 @@ test_UNI_004 = do
 covering
 test_UNI_005 : IO Bool
 test_UNI_005 = do
-  -- Verify runTestsWithCoverage signature accepts test modules
-  -- The exclusion happens inside via summarizeBranchCoverageExcludingTests
-  -- (Full integration test would be too slow - relies on AGG_005/006)
-  pure True
+  -- Test that excludeTestModules filters test functions correctly
+  -- This is what runTestsWithCoverage uses internally
+  let funcs = [ ("CoverageC-45TestsC-45AllTests-test", 10)
+              , ("CoverageC-45Collector-parse", 20)
+              ]
+  let filtered = excludeTestModules funcs
+  -- Only non-test function should remain
+  pure $ length filtered == 1 && fst (fromMaybe ("", 0) (head' filtered)) == "CoverageC-45Collector-parse"
 
 -- =============================================================================
 -- ChezMangle Tests (MGL_001-004)
